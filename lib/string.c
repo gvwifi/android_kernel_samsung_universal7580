@@ -835,3 +835,33 @@ void *memchr_inv(const void *start, int c, size_t bytes)
 	return check_bytes8(start, value, bytes % 8);
 }
 EXPORT_SYMBOL(memchr_inv);
+
+#ifndef __HAVE_ARCH_BCMP
+/**
+ * bcmp - Compare two arrays of bytes (legacy)
+ * @a1: One array
+ * @a2: Another array
+ * @len: The size of the area.
+ */
+#undef bcmp
+int bcmp(const void *a1, const void *a2, size_t len)
+{
+return memcmp(a1, a2, len);
+}
+EXPORT_SYMBOL(bcmp);
+#endif
+
+#ifndef __HAVE_ARCH_STPCPY
+/**
+ * stpcpy - Copy a %NUL terminated string, returning a pointer to the end
+ * @dest: Where to copy the string to
+ * @src: Where to copy the string from
+ */
+char *stpcpy(char *dest, const char *src)
+{
+while ((*dest++ = *src++) != '\0')
+/* nothing */;
+return dest - 1;
+}
+EXPORT_SYMBOL(stpcpy);
+#endif

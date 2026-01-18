@@ -41,20 +41,38 @@ static struct crypto_shash *tfm;
 
 u32 crc32c(u32 crc, const void *address, unsigned int length)
 {
-	struct {
-		struct shash_desc shash;
-		char ctx[crypto_shash_descsize(tfm)];
-	} desc;
+	struct shash_desc *shash;
+	char desc[sizeof(struct shash_desc) + crypto_shash_descsize(tfm)] __aligned(__alignof__(struct shash_desc));
 	int err;
+	u32 result;
 
-	desc.shash.tfm = tfm;
-	desc.shash.flags = 0;
-	*(u32 *)desc.ctx = crc;
+	shash = (struct shash_desc *)desc;
+	shash->tfm = tfm;
+	shash->flags = 0;
 
-	err = crypto_shash_update(&desc.shash, address, length);
-	BUG_ON(err);
+	/* The crypto API crc32c implementation expects the initial CRC
+	 * value to be placed directly into the context. */
+	*(u32 *)shash_desc_ctx(shash) = crc;
 
-	return *(u32 *)desc.ctx;
+	err = crypto_shash_init(shash);
+	if (err) {
+		BUG();
+		return err; /* Should not happen */
+	}
+
+	err = crypto_shash_update(shash, address, length);
+	if (err) {
+		BUG();
+		return err; /* Should not happen */
+	}
+
+	err = crypto_shash_final(shash, (u8 *)&result);
+	if (err) {
+		BUG();
+		return err; /* Should not happen */
+	}
+
+	return result;
 }
 
 EXPORT_SYMBOL(crc32c);

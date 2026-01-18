@@ -31,9 +31,12 @@ define cmd_bounds
 endef
 
 # We use internal kbuild rules to avoid the "is up to date" message from make
+# We use internal kbuild rules to avoid the "is up to date" message from make
 kernel/bounds.s: kernel/bounds.c FORCE
 	$(Q)mkdir -p $(dir $@)
 	$(call if_changed_dep,cc_s_c)
+
+CFLAGS_bounds.o := -fno-integrated-as
 
 $(obj)/$(bounds-file): kernel/bounds.s Kbuild
 	$(Q)mkdir -p $(dir $@)
@@ -48,6 +51,8 @@ offsets-file := include/generated/asm-offsets.h
 always  += $(offsets-file)
 targets += $(offsets-file)
 targets += arch/$(SRCARCH)/kernel/asm-offsets.s
+
+CFLAGS_asm-offsets.o := -fno-integrated-as
 
 
 # Default sed regexp - multiline due to syntax constraints
