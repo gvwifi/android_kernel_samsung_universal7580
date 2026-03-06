@@ -785,9 +785,120 @@ __SYSCALL(__NR_finit_module, sys_finit_module)
 __SYSCALL(380, sys_ni_syscall)
 /* #define __NR_sched_getattr 381 */
 __SYSCALL(381, sys_ni_syscall)
-/* #define __NR_renameat2 382 */
-__SYSCALL(382, sys_ni_syscall)
+#define __NR_renameat2 382
+__SYSCALL(__NR_renameat2, sys_renameat2)
 #define __NR_seccomp 383
 __SYSCALL(__NR_seccomp, sys_seccomp)
 #define __NR_getrandom 384
 __SYSCALL(__NR_getrandom, sys_getrandom)
+#define __NR_memfd_create 385
+__SYSCALL(__NR_memfd_create, sys_memfd_create)
+#define __NR_bpf 386
+__SYSCALL(__NR_bpf, sys_bpf)
+/* #define __NR_execveat 387 - not implemented in 3.10 */
+__SYSCALL(387, sys_ni_syscall)
+#define __NR_userfaultfd 388
+__SYSCALL(__NR_userfaultfd, sys_userfaultfd)
+/* #define __NR_membarrier 389 - not implemented in 3.10 */
+__SYSCALL(389, sys_ni_syscall)
+/* #define __NR_mlock2 390 - not implemented in 3.10 */
+__SYSCALL(390, sys_ni_syscall)
+/* #define __NR_copy_file_range 391 - not implemented in 3.10 */
+__SYSCALL(391, sys_ni_syscall)
+/* #define __NR_preadv2 392 - not implemented in 3.10 */
+__SYSCALL(392, sys_ni_syscall)
+/* #define __NR_pwritev2 393 - not implemented in 3.10 */
+__SYSCALL(393, sys_ni_syscall)
+/* #define __NR_pkey_mprotect 394 - not implemented in 3.10 */
+__SYSCALL(394, sys_ni_syscall)
+/* #define __NR_pkey_alloc 395 - not implemented in 3.10 */
+__SYSCALL(395, sys_ni_syscall)
+/* #define __NR_pkey_free 396 - not implemented in 3.10 */
+__SYSCALL(396, sys_ni_syscall)
+/* #define __NR_statx 397 - not implemented in 3.10 */
+__SYSCALL(397, sys_ni_syscall)
+/* #define __NR_rseq 398 - not implemented in 3.10 */
+__SYSCALL(398, sys_ni_syscall)
+/* #define __NR_io_pgetevents 399 - not implemented in 3.10 */
+__SYSCALL(399, sys_ni_syscall)
+/* 400-401 unused */
+__SYSCALL(400, sys_ni_syscall)
+__SYSCALL(401, sys_ni_syscall)
+/* 402 is unused */
+__SYSCALL(402, sys_ni_syscall)
+/* time64 syscalls 403-423 - not implemented in 3.10 */
+__SYSCALL(403, sys_ni_syscall)
+__SYSCALL(404, sys_ni_syscall)
+__SYSCALL(405, sys_ni_syscall)
+__SYSCALL(406, sys_ni_syscall)
+__SYSCALL(407, sys_ni_syscall)
+__SYSCALL(408, sys_ni_syscall)
+__SYSCALL(409, sys_ni_syscall)
+__SYSCALL(410, sys_ni_syscall)
+__SYSCALL(411, sys_ni_syscall)
+__SYSCALL(412, sys_ni_syscall)
+__SYSCALL(413, sys_ni_syscall)
+__SYSCALL(414, sys_ni_syscall)
+__SYSCALL(415, sys_ni_syscall)
+__SYSCALL(416, sys_ni_syscall)
+__SYSCALL(417, sys_ni_syscall)
+__SYSCALL(418, sys_ni_syscall)
+__SYSCALL(419, sys_ni_syscall)
+__SYSCALL(420, sys_ni_syscall)
+__SYSCALL(421, sys_ni_syscall)
+__SYSCALL(422, sys_ni_syscall)
+__SYSCALL(423, sys_ni_syscall)
+/* #define __NR_pidfd_send_signal 424 - not implemented in 3.10 */
+__SYSCALL(424, sys_ni_syscall)
+/* #define __NR_io_uring_setup 425 - not implemented in 3.10 */
+__SYSCALL(425, sys_ni_syscall)
+/* #define __NR_io_uring_enter 426 - not implemented in 3.10 */
+__SYSCALL(426, sys_ni_syscall)
+/* #define __NR_io_uring_register 427 - not implemented in 3.10 */
+__SYSCALL(427, sys_ni_syscall)
+/* #define __NR_open_tree 428 - not implemented in 3.10 */
+__SYSCALL(428, sys_ni_syscall)
+/* #define __NR_move_mount 429 - not implemented in 3.10 */
+__SYSCALL(429, sys_ni_syscall)
+/* #define __NR_fsopen 430 - not implemented in 3.10 */
+__SYSCALL(430, sys_ni_syscall)
+/* #define __NR_fsconfig 431 - not implemented in 3.10 */
+__SYSCALL(431, sys_ni_syscall)
+/* #define __NR_fsmount 432 - not implemented in 3.10 */
+__SYSCALL(432, sys_ni_syscall)
+/* #define __NR_fspick 433 - not implemented in 3.10 */
+__SYSCALL(433, sys_ni_syscall)
+/* #define __NR_pidfd_open 434 - not implemented in 3.10 */
+__SYSCALL(434, sys_ni_syscall)
+/* #define __NR_clone3 435 - not implemented in 3.10 */
+__SYSCALL(435, sys_ni_syscall)
+/* #define __NR_close_range 436 - not implemented in 3.10 */
+__SYSCALL(436, sys_ni_syscall)
+/* #define __NR_openat2 437 - not implemented in 3.10 */
+__SYSCALL(437, sys_ni_syscall)
+/* #define __NR_pidfd_getfd 438 - not implemented in 3.10 */
+__SYSCALL(438, sys_ni_syscall)
+/* #define __NR_faccessat2 439 - not implemented in 3.10 */
+__SYSCALL(439, sys_ni_syscall)
+/* #define __NR_process_madvise 440 - not implemented in 3.10 */
+__SYSCALL(440, sys_ni_syscall)
+/* #define __NR_epoll_pwait2 441 - not implemented in 3.10 */
+__SYSCALL(441, sys_ni_syscall)
+/* #define __NR_mount_setattr 442 - not implemented in 3.10 */
+__SYSCALL(442, sys_ni_syscall)
+/* #define __NR_quotactl_fd 443 - not implemented in 3.10 */
+__SYSCALL(443, sys_ni_syscall)
+/* #define __NR_landlock_create_ruleset 444 - not implemented in 3.10 */
+__SYSCALL(444, sys_ni_syscall)
+/* #define __NR_landlock_add_rule 445 - not implemented in 3.10 */
+__SYSCALL(445, sys_ni_syscall)
+/* #define __NR_landlock_restrict_self 446 - not implemented in 3.10 */
+__SYSCALL(446, sys_ni_syscall)
+/* 447 is unused */
+__SYSCALL(447, sys_ni_syscall)
+/* #define __NR_process_mrelease 448 - not implemented in 3.10 */
+__SYSCALL(448, sys_ni_syscall)
+/* #define __NR_futex_waitv 449 - not implemented in 3.10 */
+__SYSCALL(449, sys_ni_syscall)
+/* #define __NR_set_mempolicy_home_node 450 - not implemented in 3.10 */
+__SYSCALL(450, sys_ni_syscall)

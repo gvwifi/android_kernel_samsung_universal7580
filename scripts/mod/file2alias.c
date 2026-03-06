@@ -100,9 +100,7 @@ extern struct devtable *__start___devtable[], *__stop___devtable[];
 /* Add a table entry.  We test function type matches while we're here. */
 #define ADD_TO_DEVTABLE(device_id, type, function) \
 	static struct devtable __cat(devtable,__LINE__) = {	\
-		device_id + 0*sizeof((function)((const char *)NULL,	\
-						(void *)NULL,		\
-						(char *)NULL)),		\
+		device_id,		\
 		SIZE_##type, (function) };				\
 	static struct devtable *SECTION(__devtable) __used \
 		__cat(devtable_ptr,__LINE__) = &__cat(devtable,__LINE__)

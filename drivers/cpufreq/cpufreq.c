@@ -44,6 +44,18 @@
  */
 static struct cpufreq_driver *cpufreq_driver;
 static DEFINE_PER_CPU(struct cpufreq_policy *, cpufreq_cpu_data);
+/*
+ * Offline (parked) cpufreq policies.
+ *
+ * When the last CPU in a frequency cluster goes offline, instead of
+ * destroying the policy kobject (which removes the sysfs policyN
+ * directory), we park the policy here.  This keeps
+ * /sys/devices/system/cpu/cpufreq/policyN/ alive with cur=0, so
+ * Android's CpuMonitorService can always access the directory even
+ * when all CPUs in the cluster are sleeping.
+ */
+static LIST_HEAD(cpufreq_offline_policies);
+static DEFINE_SPINLOCK(cpufreq_offline_lock);
 #ifdef CONFIG_HOTPLUG_CPU
 /* This one keeps track of the previously set governor of a removed CPU */
 static DEFINE_PER_CPU(char[CPUFREQ_NAME_LEN], cpufreq_cpu_governor);
@@ -755,8 +767,33 @@ static ssize_t show(struct kobject *kobj, struct attribute *attr, char *buf)
 	struct freq_attr *fattr = to_attr(attr);
 	ssize_t ret = -EINVAL;
 	policy = cpufreq_cpu_get_sysfs(policy->cpu);
-	if (!policy)
+	if (!policy) {
+		/*
+		 * cpufreq_cpu_data[cpu] is NULL when all CPUs in the cluster
+		 * are offline.  The policy kobject may still be alive if it was
+		 * parked in cpufreq_offline_policies (cur=0).  Serve the sysfs
+		 * read directly from the parked policy so that CpuMonitorService
+		 * gets 0Hz (instead of EINVAL / IOException) while the cluster
+		 * is sleeping.
+		 */
+		struct cpufreq_policy *parked = to_policy(kobj);
+		struct cpufreq_policy *cp_iter;
+		bool found = false;
+
+		spin_lock(&cpufreq_offline_lock);
+		list_for_each_entry(cp_iter, &cpufreq_offline_policies,
+				    offline_node) {
+			if (cp_iter == parked) {
+				found = true;
+				break;
+			}
+		}
+		spin_unlock(&cpufreq_offline_lock);
+
+		if (found && fattr->show)
+			ret = fattr->show(parked, buf);
 		goto no_policy;
+	}
 
 	if (lock_policy_rwsem_read(policy->cpu) < 0)
 		goto fail;
@@ -865,6 +902,20 @@ static int cpufreq_add_dev_interface(unsigned int cpu,
 		policy->kobj.kset = kset_create_and_add("kset", NULL, &policy->kobj);
 #endif
 
+	/*
+	 * Create /sys/devices/system/cpu/cpufreq/policyN symlink so that
+	 * Android's CpuMonitorService can find per-policy frequency stats
+	 * at the standard location without breaking the kobject lifecycle.
+	 */
+	{
+		char link_name[16];
+		snprintf(link_name, sizeof(link_name), "policy%u", cpu);
+		if (sysfs_create_link(cpufreq_global_kobject, &policy->kobj,
+				      link_name))
+			pr_warn("cpufreq: failed to create %s symlink\n",
+				link_name);
+	}
+
 	/* set up files for this cpu device */
 	drv_attr = cpufreq_driver->attr;
 	while ((drv_attr) && (*drv_attr)) {
@@ -967,6 +1018,80 @@ static int cpufreq_add_policy_cpu(unsigned int cpu, unsigned int sibling,
 #endif
 
 /**
+ * cpufreq_revive_parked_policy - revive a policy that was parked because
+ *   all its CPUs had gone offline.  The policy kobject (and sysfs directory)
+ *   was kept alive; we just need to re-wire the per-CPU pointers and restart
+ *   the governor.
+ */
+static int cpufreq_revive_parked_policy(unsigned int cpu,
+					struct cpufreq_policy *policy,
+					struct device *dev)
+{
+	int ret = 0;
+	unsigned long flags;
+	int has_target = !!cpufreq_driver->target;
+
+	pr_debug("cpufreq: reviving parked policy for CPU %u\n", cpu);
+
+	/* Wire up per-CPU data before touching the governor */
+	write_lock_irqsave(&cpufreq_driver_lock, flags);
+	cpumask_set_cpu(cpu, policy->cpus);
+	policy->cpu = cpu;
+	per_cpu(cpufreq_policy_cpu, cpu) = cpu;
+	per_cpu(cpufreq_cpu_data, cpu) = policy;
+	write_unlock_irqrestore(&cpufreq_driver_lock, flags);
+
+	/* Re-arm the completion used when the kobject is finally put */
+	init_completion(&policy->kobj_unregister);
+
+	/* Refresh current frequency from hardware */
+	if (cpufreq_driver->get)
+		policy->cur = cpufreq_driver->get(cpu);
+
+#ifdef CONFIG_HOTPLUG_CPU
+	{
+		struct cpufreq_governor *gov =
+			__find_governor(per_cpu(cpufreq_cpu_governor, cpu));
+		if (gov) {
+			policy->governor = gov;
+			pr_debug("cpufreq: revive: restoring governor %s for CPU %u\n",
+				 gov->name, cpu);
+		}
+	}
+#endif
+
+	/* Re-init governor private data for this policy, then start it */
+	if (has_target) {
+		ret = __cpufreq_governor(policy, CPUFREQ_GOV_POLICY_INIT);
+		if (ret) {
+			pr_err("cpufreq: revive: POLICY_INIT failed for CPU %u (%d)\n",
+			       cpu, ret);
+			/* Undo per-CPU wiring and re-park */
+			write_lock_irqsave(&cpufreq_driver_lock, flags);
+			cpumask_clear_cpu(cpu, policy->cpus);
+			per_cpu(cpufreq_policy_cpu, cpu) = -1;
+			per_cpu(cpufreq_cpu_data, cpu) = NULL;
+			write_unlock_irqrestore(&cpufreq_driver_lock, flags);
+			spin_lock(&cpufreq_offline_lock);
+			list_add(&policy->offline_node, &cpufreq_offline_policies);
+			spin_unlock(&cpufreq_offline_lock);
+			return ret;
+		}
+		ret = __cpufreq_governor(policy, CPUFREQ_GOV_START);
+		if (!ret)
+			__cpufreq_governor(policy, CPUFREQ_GOV_LIMITS);
+	}
+
+	/* Create the per-cpu cpufreq symlink under the cpu device */
+	ret = sysfs_create_link(&dev->kobj, &policy->kobj, "cpufreq");
+	if (ret)
+		pr_warn("cpufreq: revive: failed to create cpufreq link for CPU %u\n",
+			cpu);
+
+	return ret;
+}
+
+/**
  * cpufreq_add_dev - add a CPU device
  *
  * Adds the cpufreq interface for a CPU device.
@@ -1011,6 +1136,31 @@ static int cpufreq_add_dev(struct device *dev, struct subsys_interface *sif)
 		}
 	}
 	read_unlock_irqrestore(&cpufreq_driver_lock, flags);
+
+	/*
+	 * Check if there is a parked (all-CPUs-offline) policy that covers
+	 * this CPU.  If so, revive it rather than creating a fresh policy -
+	 * this keeps the policyN sysfs directory stable so that
+	 * CpuMonitorService does not lose track of the frequency cluster.
+	 */
+	{
+		struct cpufreq_policy *parked = NULL;
+		struct cpufreq_policy *cp_iter;
+
+		spin_lock(&cpufreq_offline_lock);
+		list_for_each_entry(cp_iter, &cpufreq_offline_policies,
+				    offline_node) {
+			if (cpumask_test_cpu(cpu, cp_iter->related_cpus)) {
+				list_del_init(&cp_iter->offline_node);
+				parked = cp_iter;
+				break;
+			}
+		}
+		spin_unlock(&cpufreq_offline_lock);
+
+		if (parked)
+			return cpufreq_revive_parked_policy(cpu, parked, dev);
+	}
 #endif
 #endif
 
@@ -1032,6 +1182,7 @@ static int cpufreq_add_dev(struct device *dev, struct subsys_interface *sif)
 	policy->cpu = cpu;
 	policy->governor = CPUFREQ_DEFAULT_GOVERNOR;
 	cpumask_copy(policy->cpus, cpumask_of(cpu));
+	INIT_LIST_HEAD(&policy->offline_node);
 
 	/* Initially set CPU itself as the policy_cpu */
 	per_cpu(cpufreq_policy_cpu, cpu) = cpu;
@@ -1185,6 +1336,14 @@ static int __cpufreq_remove_dev(struct device *dev, struct subsys_interface *sif
 		/* first sibling now owns the new sysfs dir */
 		cpu_dev = get_cpu_device(cpumask_first(data->cpus));
 		sysfs_remove_link(&cpu_dev->kobj, "cpufreq");
+
+		/* Remove old policyN symlink before kobject_move */
+		{
+			char link_name[16];
+			snprintf(link_name, sizeof(link_name), "policy%u", cpu);
+			sysfs_remove_link(cpufreq_global_kobject, link_name);
+		}
+
 		ret = kobject_move(&data->kobj, &cpu_dev->kobj);
 		if (ret) {
 			pr_err("%s: Failed to move kobj: %d", __func__, ret);
@@ -1198,6 +1357,17 @@ static int __cpufreq_remove_dev(struct device *dev, struct subsys_interface *sif
 
 			unlock_policy_rwsem_write(cpu);
 
+			/* Restore old policyN symlink on failure */
+			{
+				int _r;
+				char link_name[16];
+				snprintf(link_name, sizeof(link_name), "policy%u", cpu);
+				_r = sysfs_create_link(cpufreq_global_kobject,
+						       &data->kobj, link_name);
+				if (_r)
+					pr_warn("cpufreq: restore %s symlink failed: %d\n",
+						link_name, _r);
+			}
 			ret = sysfs_create_link(&cpu_dev->kobj, &data->kobj,
 					"cpufreq");
 			return -EINVAL;
@@ -1208,39 +1378,83 @@ static int __cpufreq_remove_dev(struct device *dev, struct subsys_interface *sif
 		unlock_policy_rwsem_write(cpu);
 		pr_debug("%s: policy Kobject moved to cpu: %d from: %d\n",
 				__func__, cpu_dev->id, cpu);
+
+		/* Create new policyM symlink for the new owner */
+		{
+			char link_name[16];
+			snprintf(link_name, sizeof(link_name), "policy%u",
+				 cpu_dev->id);
+			if (sysfs_create_link(cpufreq_global_kobject, &data->kobj,
+					      link_name))
+				pr_warn("cpufreq: failed to create %s symlink\n",
+					link_name);
+		}
 	}
 
-	/* If cpu is last user of policy, free policy */
+	/* If cpu is last user of policy, park it (hotplug) or free it (driver exit) */
 	if (cpus == 1) {
 		if (cpufreq_driver->target)
 			__cpufreq_governor(data, CPUFREQ_GOV_POLICY_EXIT);
 
-		lock_policy_rwsem_read(cpu);
-		last_min = data->user_min;
-		last_max = data->user_max;
-		kobj = &data->kobj;
-		cmp = &data->kobj_unregister;
-		unlock_policy_rwsem_read(cpu);
-#ifdef CONFIG_SOC_EXYNOS7580
-		kset_unregister(kobj->kset);
-		kobj->kset = NULL;
-#endif
-		kobject_put(kobj);
-
-		/* we need to make sure that the underlying kobj is actually
-		 * not referenced anymore by anybody before we proceed with
-		 * unloading.
+		/*
+		 * During hotplug (sif == NULL): park the policy so that
+		 * the sysfs policyN directory stays alive with cur=0.
+		 * CpuMonitorService will keep reading 0Hz for the cluster
+		 * instead of hitting a missing-file error every minute.
+		 *
+		 * During driver unregistration (sif != NULL): destroy
+		 * normally.
 		 */
-		pr_debug("waiting for dropping of refcount\n");
-		wait_for_completion(cmp);
-		pr_debug("wait complete\n");
+		if (sif == NULL) {
+			/* Mark frequency as 0 (all CPUs offline) */
+			write_lock_irqsave(&cpufreq_driver_lock, flags);
+			data->cur = 0;
+			cpumask_clear(data->cpus);
+			write_unlock_irqrestore(&cpufreq_driver_lock, flags);
 
-		if (cpufreq_driver->exit)
-			cpufreq_driver->exit(data);
+			/* Park: keep kobject alive, add to offline list */
+			INIT_LIST_HEAD(&data->offline_node);
+			spin_lock(&cpufreq_offline_lock);
+			list_add(&data->offline_node, &cpufreq_offline_policies);
+			spin_unlock(&cpufreq_offline_lock);
 
-		free_cpumask_var(data->related_cpus);
-		free_cpumask_var(data->cpus);
-		kfree(data);
+			pr_debug("cpufreq: parked policy for CPU %u "
+				 "(all cluster CPUs offline, sysfs preserved)\n",
+				 cpu);
+		} else {
+			/* Driver exit path: destroy the policy completely */
+
+			/* Remove the policyN symlink before kobject_put */
+			{
+				char link_name[16];
+				snprintf(link_name, sizeof(link_name), "policy%u",
+					 data->cpu);
+				sysfs_remove_link(cpufreq_global_kobject, link_name);
+			}
+
+			lock_policy_rwsem_read(cpu);
+			last_min = data->user_min;
+			last_max = data->user_max;
+			kobj = &data->kobj;
+			cmp = &data->kobj_unregister;
+			unlock_policy_rwsem_read(cpu);
+#ifdef CONFIG_SOC_EXYNOS7580
+			kset_unregister(kobj->kset);
+			kobj->kset = NULL;
+#endif
+			kobject_put(kobj);
+
+			pr_debug("waiting for dropping of refcount\n");
+			wait_for_completion(cmp);
+			pr_debug("wait complete\n");
+
+			if (cpufreq_driver->exit)
+				cpufreq_driver->exit(data);
+
+			free_cpumask_var(data->related_cpus);
+			free_cpumask_var(data->cpus);
+			kfree(data);
+		}
 	} else {
 		pr_debug("%s: removing link, cpu: %d\n", __func__, cpu);
 		cpufreq_cpu_put(data);

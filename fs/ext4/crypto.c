@@ -36,7 +36,9 @@
 #include <linux/spinlock_types.h>
 
 #include "ext4_extents.h"
+#include "ext4_crypto.h"
 #include "xattr.h"
+#include <linux/fscrypt.h>
 
 /* Encryption added and removed here! (L: */
 
@@ -100,8 +102,30 @@ struct ext4_crypto_ctx *ext4_get_crypto_ctx(struct inode *inode)
 	unsigned long flags;
 	struct ext4_crypt_info *ci = EXT4_I(inode)->i_crypt_info;
 
-	if (ci == NULL)
-		return ERR_PTR(-ENOKEY);
+	if (ci == NULL) {
+		/*
+		 * Try the VFS fscrypt path (supports v2 policies / filesystem
+		 * keyring).  fscrypt_get_encryption_info() is idempotent — it
+		 * returns 0 immediately if inode->i_crypt_info is already set.
+		 */
+		int err = fscrypt_get_encryption_info(inode);
+
+		if (err)
+			return ERR_PTR(err);
+
+		/*
+		 * After setup, if neither the old ext4 field nor the new VFS
+		 * field is populated the key is genuinely unavailable.
+		 */
+		if (inode->i_crypt_info == NULL)
+			return ERR_PTR(-ENOKEY);
+
+		/*
+		 * VFS fscrypt has the key (inode->i_crypt_info is set).
+		 * Fall through to allocate a bare ext4_crypto_ctx for bio
+		 * tracking; decryption will use fscrypt_decrypt_page().
+		 */
+	}
 
 	/*
 	 * We first try getting the ctx from a free list because in
@@ -380,9 +404,20 @@ struct page *ext4_encrypt(struct inode *inode,
  */
 int ext4_decrypt(struct ext4_crypto_ctx *ctx, struct page *page)
 {
+	struct inode *inode = page->mapping->host;
+
 	BUG_ON(!PageLocked(page));
 
-	return ext4_page_crypto(ctx, page->mapping->host,
+	/*
+	 * When the old per-inode ext4 key is absent but VFS fscrypt has set up
+	 * a key (e.g. v2 policy), delegate decryption to fscrypt_decrypt_page()
+	 * which uses inode->i_crypt_info set by fscrypt_get_encryption_info().
+	 */
+	if (EXT4_I(inode)->i_crypt_info == NULL && inode->i_crypt_info != NULL)
+		return fscrypt_decrypt_page(inode, page, PAGE_CACHE_SIZE,
+					    0, page->index);
+
+	return ext4_page_crypto(ctx, inode,
 				EXT4_DECRYPT, page->index, page, page);
 }
 
@@ -473,3 +508,57 @@ uint32_t ext4_validate_encryption_key_size(uint32_t mode, uint32_t size)
 		return size;
 	return 0;
 }
+
+/*
+ * fscrypt_operations for ext4
+ */
+#include <linux/fscrypt.h>
+
+static int ext4_get_context(struct inode *inode, void *ctx, size_t len)
+{
+	return ext4_xattr_get(inode, EXT4_XATTR_INDEX_ENCRYPTION,
+			      EXT4_XATTR_NAME_ENCRYPTION_CONTEXT, ctx, len);
+}
+
+static int ext4_set_context(struct inode *inode, const void *ctx, size_t len,
+			    void *fs_data)
+{
+	int res;
+
+	res = ext4_xattr_set(inode, EXT4_XATTR_INDEX_ENCRYPTION,
+			     EXT4_XATTR_NAME_ENCRYPTION_CONTEXT, ctx,
+			     len, 0);
+	if (!res) {
+		ext4_set_inode_flag(inode, EXT4_INODE_ENCRYPT);
+		ext4_clear_inode_state(inode, EXT4_STATE_MAY_INLINE_DATA);
+	}
+	return res;
+}
+
+static int ext4_dummy_context(struct inode *inode)
+{
+#ifdef DUMMY_ENCRYPTION_ENABLED
+	return DUMMY_ENCRYPTION_ENABLED(EXT4_SB(inode->i_sb)) ? 1 : 0;
+#else
+	return 0;
+#endif
+}
+
+static bool ext4_fscrypt_empty_dir(struct inode *inode)
+{
+	return ext4_empty_dir(inode);
+}
+
+static unsigned int ext4_max_namelen(struct inode *inode)
+{
+	return 255;
+}
+
+struct fscrypt_operations ext4_cryptops = {
+	.key_prefix		= "ext4:",
+	.get_context		= ext4_get_context,
+	.set_context		= ext4_set_context,
+	.dummy_context		= ext4_dummy_context,
+	.empty_dir		= ext4_fscrypt_empty_dir,
+	.max_namelen		= ext4_max_namelen,
+};

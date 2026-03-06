@@ -28,6 +28,21 @@
 #define F_GETPIPE_SZ	(F_LINUX_SPECIFIC_BASE + 8)
 
 /*
+ * Set and get of seals
+ */
+#define F_ADD_SEALS	(F_LINUX_SPECIFIC_BASE + 9)
+#define F_GET_SEALS	(F_LINUX_SPECIFIC_BASE + 10)
+
+/*
+ * Types of seals
+ */
+#define F_SEAL_SEAL	0x0001	/* prevent further seals from being set */
+#define F_SEAL_SHRINK	0x0002	/* prevent file from shrinking */
+#define F_SEAL_GROW	0x0004	/* prevent file from growing */
+#define F_SEAL_WRITE	0x0008	/* prevent writes */
+#define F_SEAL_FUTURE_WRITE	0x0010	/* prevent future writes while mapped */
+
+/*
  * Types of directory notifications that may be requested.
  */
 #define DN_ACCESS	0x00000001	/* File accessed */
@@ -47,6 +62,11 @@
 #define AT_SYMLINK_FOLLOW	0x400   /* Follow symbolic links.  */
 #define AT_NO_AUTOMOUNT		0x800	/* Suppress terminal automount traversal */
 #define AT_EMPTY_PATH		0x1000	/* Allow empty relative pathname */
+
+#define AT_STATX_SYNC_TYPE	0x6000	/* Type of synchronisation required from statx() */
+#define AT_STATX_SYNC_AS_STAT	0x0000	/* - Do whatever stat() does */
+#define AT_STATX_FORCE_SYNC	0x2000	/* - Force the attributes to be sync'd with the server */
+#define AT_STATX_DONT_SYNC	0x4000	/* - Don't sync attributes with the server */
 
 
 #endif /* _UAPI_LINUX_FCNTL_H */

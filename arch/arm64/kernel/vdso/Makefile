@@ -15,6 +15,15 @@ ccflags-y := -shared -fno-common -fno-builtin
 ccflags-y += -nostdlib -Wl,-soname=linux-vdso.so.1 \
 		$(call cc-ldoption, -Wl$(comma)--hash-style=sysv)
 
+# Disable profiling and tracing for the VDSO
+CFLAGS_REMOVE_gettimeofday.o = -pg
+CFLAGS_REMOVE_note.o = -pg
+CFLAGS_REMOVE_sigreturn.o = -pg
+ccflags-y += -fno-profile-arcs -fno-test-coverage
+ifeq ($(cc-name),clang)
+ccflags-y += -Wno-unused-command-line-argument
+endif
+
 # Workaround for bare-metal (ELF) toolchains that neglect to pass -shared
 # down to collect2, resulting in silent corruption of the vDSO image.
 ccflags-y += -Wl,-shared
@@ -51,9 +60,9 @@ $(obj-vdso): %.o: %.S
 
 # Actual build commands
 quiet_cmd_vdsold = VDSOL $@
-      cmd_vdsold = $(CC) $(c_flags) -Wl,-n -Wl,-T $^ -o $@
+      cmd_vdsold = $(CC) $(filter-out -pg -fprofile-arcs -ftest-coverage,$(c_flags)) -Wno-unused-command-line-argument -Wl,-n -Wl,-T $^ -o $@
 quiet_cmd_vdsoas = VDSOA $@
-      cmd_vdsoas = $(CC) $(a_flags) -c -o $@ $<
+      cmd_vdsoas = $(CC) $(filter-out -pg -fprofile-arcs -ftest-coverage,$(a_flags)) -Wno-unused-command-line-argument -c -o $@ $<
 
 # Install commands for the unstripped file
 quiet_cmd_vdso_install = INSTALL $@

@@ -25,6 +25,7 @@
 #include <linux/init.h>
 #include <linux/vfs.h>
 #include <linux/mount.h>
+#include <linux/userfaultfd_k.h>
 #include <linux/ramfs.h>
 #include <linux/pagemap.h>
 #include <linux/file.h>
@@ -63,6 +64,7 @@ static struct vfsmount *shm_mnt;
 #include <linux/namei.h>
 #include <linux/ctype.h>
 #include <linux/migrate.h>
+#include <linux/fcntl.h>
 #include <linux/highmem.h>
 #include <linux/seq_file.h>
 #include <linux/magic.h>
@@ -171,9 +173,9 @@ static const struct super_operations shmem_ops;
 static const struct address_space_operations shmem_aops;
 static const struct file_operations shmem_file_operations;
 static const struct inode_operations shmem_inode_operations;
+extern const struct vm_operations_struct shmem_vm_ops;
 static const struct inode_operations shmem_dir_inode_operations;
 static const struct inode_operations shmem_special_inode_operations;
-static const struct vm_operations_struct shmem_vm_ops;
 
 static struct backing_dev_info shmem_backing_dev_info  __read_mostly = {
 	.ra_pages	= 0,	/* No readahead */
@@ -334,7 +336,7 @@ static void shmem_delete_from_page_cache(struct page *page, void *radswap)
 /*
  * Like find_get_pages, but collecting swap entries as well as pages.
  */
-static unsigned shmem_find_get_pages_and_swap(struct address_space *mapping,
+unsigned shmem_find_get_pages_and_swap(struct address_space *mapping,
 					pgoff_t start, unsigned int nr_pages,
 					struct page **pages, pgoff_t *indices)
 {
@@ -1321,6 +1323,15 @@ static int shmem_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	int error;
 	int ret = VM_FAULT_LOCKED;
 
+	if (vma->vm_flags & VM_UFFD_MINOR) {
+		struct page *page_in_cache = find_get_page(inode->i_mapping, vmf->pgoff);
+		if (page_in_cache) {
+			page_cache_release(page_in_cache);
+			return handle_userfault(vma, (unsigned long)vmf->virtual_address,
+						vmf->flags, VM_UFFD_MINOR);
+		}
+	}
+
 	/*
 	 * Trinity finds that probing a hole which tmpfs is punching can
 	 * prevent the hole-punch from ever completing: which in turn
@@ -1435,6 +1446,17 @@ out_nomem:
 
 static int shmem_mmap(struct file *file, struct vm_area_struct *vma)
 {
+	struct shmem_inode_info *info = SHMEM_I(file_inode(file));
+
+	if (info->seals & F_SEAL_WRITE) {
+		if (vma->vm_flags & VM_SHARED) {
+			if (vma->vm_flags & VM_WRITE)
+				return -EPERM;
+			/* we cannot allow mprotect to enable write support */
+			vma->vm_flags &= ~VM_MAYWRITE;
+		}
+	}
+
 	file_accessed(file);
 	vma->vm_ops = &shmem_vm_ops;
 	return 0;
@@ -2648,6 +2670,12 @@ static int shmem_show_options(struct seq_file *seq, struct dentry *root)
 	shmem_show_mpol(seq, sbinfo->mpol);
 	return 0;
 }
+
+bool is_shmem_file(struct file *file)
+{
+	return file->f_op == &shmem_file_operations;
+}
+EXPORT_SYMBOL_GPL(is_shmem_file);
 #endif /* CONFIG_TMPFS */
 
 static void shmem_put_super(struct super_block *sb)
@@ -2857,13 +2885,14 @@ static const struct super_operations shmem_ops = {
 	.put_super	= shmem_put_super,
 };
 
-static const struct vm_operations_struct shmem_vm_ops = {
+const struct vm_operations_struct shmem_vm_ops = {
 	.fault		= shmem_fault,
 #ifdef CONFIG_NUMA
 	.set_policy     = shmem_set_policy,
 	.get_policy     = shmem_get_policy,
 #endif
 };
+EXPORT_SYMBOL(shmem_vm_ops);
 
 static struct dentry *shmem_mount(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data)
@@ -3103,3 +3132,4 @@ struct page *shmem_read_mapping_page_gfp(struct address_space *mapping,
 #endif
 }
 EXPORT_SYMBOL_GPL(shmem_read_mapping_page_gfp);
+EXPORT_SYMBOL_GPL(shmem_find_get_pages_and_swap);

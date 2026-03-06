@@ -19,6 +19,9 @@
 #include "ext4_jbd2.h"
 #include "ext4.h"
 #include "ext4_extents.h"
+#include "ext4_crypto.h"
+#include <linux/fscrypt.h>
+#include <linux/fsverity.h>
 
 #define MAX_32_NUM ((((unsigned long long) 1) << 32) - 1)
 
@@ -644,6 +647,39 @@ resizefs_out:
 		return invalidate_mapping_pages(inode->i_mapping, 0, -1);
 	}
 
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
+	case EXT4_IOC_SET_ENCRYPTION_POLICY:
+		if (!capable(CAP_SYS_ADMIN)) // Allow non-root? fscrypt_ioctl checks owner.
+            // userspace might rely on owner check. fscrypt_ioctl_set_policy checks inode owner.
+            // We can just call fscrypt_ioctl_set_policy. It fits.
+			;
+		return fscrypt_ioctl_set_policy(filp, (const void __user *)arg);
+
+	case EXT4_IOC_GET_ENCRYPTION_POLICY:
+		return fscrypt_ioctl_get_policy(filp, (void __user *)arg);
+
+	/* fscrypt v2 key management ioctls */
+	case FS_IOC_ADD_ENCRYPTION_KEY:
+		return fscrypt_ioctl_add_key(filp, (void __user *)arg);
+
+	case FS_IOC_REMOVE_ENCRYPTION_KEY:
+		return fscrypt_ioctl_remove_key(filp, (void __user *)arg);
+
+	case FS_IOC_REMOVE_ENCRYPTION_KEY_ALL_USERS:
+		return fscrypt_ioctl_remove_key_all_users(filp, (void __user *)arg);
+
+	case FS_IOC_GET_ENCRYPTION_KEY_STATUS:
+		return fscrypt_ioctl_get_key_status(filp, (void __user *)arg);
+#endif
+
+#ifdef CONFIG_EXT4_FS_VERITY
+	case FS_IOC_ENABLE_VERITY:
+		return fsverity_ioctl_enable(filp, (const void __user *)arg);
+
+	case FS_IOC_MEASURE_VERITY:
+		return fsverity_ioctl_measure(filp, (void __user *)arg);
+#endif
+
 	default:
 		return -ENOTTY;
 	}
@@ -708,6 +744,27 @@ long ext4_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case FITRIM:
 	case EXT4_IOC_RESIZE_FS:
 		break;
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
+	/*
+	 * Encryption policy ioctls use structures that are the same size
+	 * on 32-bit and 64-bit (12 bytes for v1, 44 bytes for v2).
+	 * They don't contain any pointers, so they can be passed through directly.
+	 */
+	case EXT4_IOC_SET_ENCRYPTION_POLICY:
+	case EXT4_IOC_GET_ENCRYPTION_POLICY:
+	/* fscrypt v2 key management ioctls - also pointer-free */
+	case FS_IOC_ADD_ENCRYPTION_KEY:
+	case FS_IOC_REMOVE_ENCRYPTION_KEY:
+	case FS_IOC_REMOVE_ENCRYPTION_KEY_ALL_USERS:
+	case FS_IOC_GET_ENCRYPTION_KEY_STATUS:
+	case FS_IOC_GET_ENCRYPTION_POLICY_EX:
+		break;
+#endif
+#ifdef CONFIG_EXT4_FS_VERITY
+	case FS_IOC_ENABLE_VERITY:
+	case FS_IOC_MEASURE_VERITY:
+		break;
+#endif
 	default:
 		return -ENOIOCTLCMD;
 	}

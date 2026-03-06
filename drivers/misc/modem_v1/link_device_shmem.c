@@ -407,7 +407,7 @@ static void cmd_crash_exit_handler(struct mem_link_device *mld)
 
 #ifdef DEBUG_MODEM_IF
 	if (!atomic_read(&mld->forced_cp_crash))
-		queue_work(system_nrt_wq, &mld->dump_work);
+		queue_work(system_wq, &mld->dump_work);
 #endif
 
 	shmem_handle_cp_crash(mld, STATE_CRASH_EXIT);

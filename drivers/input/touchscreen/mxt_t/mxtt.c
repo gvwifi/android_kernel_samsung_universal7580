@@ -67,11 +67,12 @@ static int mxt_read_mem(struct mxt_data *data, u16 reg, u16 len, void *buf)
 		return 0;
 #endif
 
-	for (i = 0; i < 3 ; i++) {
+	for (i = 0; i < 5 ; i++) {
 		ret = i2c_transfer(data->client->adapter, msg, 2);
 		if (ret < 0){
-			tsp_debug_err(true, &data->client->dev, "%s fail[%d] address[0x%x]\n",
-				__func__, ret, le_reg);
+			tsp_debug_err(true, &data->client->dev, "%s fail[%d] address[0x%x] retry(%d)\n",
+				__func__, ret, le_reg, i);
+			msleep(30 * (i + 1));
 			continue;
 
 		} else if (2 == ret)
@@ -99,12 +100,13 @@ static int mxt_write_mem(struct mxt_data *data,
 	put_unaligned_le16(cpu_to_le16(reg), tmp);
 	memcpy(tmp + 2, buf, len);
 
-	for (i = 0; i < 3 ; i++) {
+	for (i = 0; i < 5 ; i++) {
 		ret = i2c_master_send(data->client, tmp, sizeof(tmp));
-		if (ret < 0)
+		if (ret < 0) {
 			tsp_debug_err(true, &data->client->dev,	"%s %d times write error on address[0x%x,0x%x]\n",
 				__func__, i, tmp[1], tmp[0]);
-		else
+			msleep(10 * (i + 1));
+		} else
 			break;
 	}
 

@@ -237,7 +237,8 @@ void fixup_lower_ownership(struct dentry *dentry, const char *name)
 
 	sdcardfs_get_lower_path(dentry, &path);
 	inode = path.dentry->d_inode;
-	if (path.dentry->d_inode->i_gid != gid || path.dentry->d_inode->i_uid != uid) {
+	if (!gid_eq(path.dentry->d_inode->i_gid, make_kgid(&init_user_ns, gid)) || 
+	    !uid_eq(path.dentry->d_inode->i_uid, make_kuid(&init_user_ns, uid))) {
 		newattrs.ia_valid = ATTR_GID | ATTR_UID | ATTR_FORCE;
 		newattrs.ia_uid = make_kuid(current_user_ns(), uid);
 		newattrs.ia_gid = make_kgid(current_user_ns(), gid);
@@ -348,6 +349,11 @@ int need_graft_path(struct dentry *dentry)
 	struct sdcardfs_inode_info *parent_info = SDCARDFS_I(parent->d_inode);
 	struct sdcardfs_sb_info *sbi = SDCARDFS_SB(dentry->d_sb);
 	struct qstr obb = QSTR_LITERAL("obb");
+
+	if (sbi->options.unshared_obb) {
+		dput(parent);
+		return 0;
+	}
 
 	if (parent_info->data->perm == PERM_ANDROID &&
 			qstr_case_eq(&dentry->d_name, &obb)) {

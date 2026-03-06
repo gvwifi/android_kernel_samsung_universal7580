@@ -4993,7 +4993,7 @@ static u16 CalculateCrc16(const BYTE * bpData,const u32 dwLen, const BOOLEAN fBi
 	u16 wNumOfBits = 16U;
 	u16 wCrcOut=0;
 
-	wNumOfBits = wNumOfBits; // to avoid lint warning
+	(void)wNumOfBits; // to avoid lint warning
 
 	for (i=0; i<(u16)dwLen; i++)
 	{

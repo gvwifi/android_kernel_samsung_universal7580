@@ -1710,6 +1710,60 @@ static long ion_alloc_preload(struct ion_client *client,
 	return 0;
 }
 
+#define ION_CURRENT_ABI_VERSION	1
+
+static int ion_query_heaps(struct ion_client *client, struct ion_heap_query *query)
+{
+	struct ion_device *dev = client->dev;
+	struct ion_heap_data __user *buffer =
+			(struct ion_heap_data __user *)(unsigned long)query->heaps;
+	int ret = -EINVAL, cnt = 0, max_cnt;
+	struct ion_heap *heap;
+	struct ion_heap_data hdata;
+
+	memset(&hdata, 0, sizeof(hdata));
+
+	down_read(&dev->lock);
+	if (!buffer) {
+		/* Count the number of heaps */
+		query->cnt = 0;
+		plist_for_each_entry(heap, &dev->heaps, node)
+			query->cnt++;
+		ret = 0;
+		goto out;
+	}
+
+	if (query->cnt <= 0)
+		goto out;
+
+	max_cnt = query->cnt;
+
+	plist_for_each_entry(heap, &dev->heaps, node) {
+		strncpy(hdata.name, heap->name, MAX_HEAP_NAME);
+		hdata.name[MAX_HEAP_NAME - 1] = '\0';
+		hdata.type = heap->type;
+		hdata.heap_id = heap->id;
+		hdata.reserved0 = 0;
+		hdata.reserved1 = 0;
+		hdata.reserved2 = 0;
+
+		if (copy_to_user(&buffer[cnt], &hdata, sizeof(hdata))) {
+			ret = -EFAULT;
+			goto out;
+		}
+
+		cnt++;
+		if (cnt >= max_cnt)
+			break;
+	}
+
+	query->cnt = cnt;
+	ret = 0;
+out:
+	up_read(&dev->lock);
+	return ret;
+}
+
 /* fix up the cases where the ioctl direction bits are incorrect */
 static unsigned int ion_ioctl_dir(unsigned int cmd)
 {
@@ -1736,9 +1790,12 @@ static long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		struct ion_fd_data fd;
 		struct ion_fd_partial_data fd_partial;
 		struct ion_allocation_data allocation;
+		struct ion_new_allocation_data new_allocation;
 		struct ion_handle_data handle;
 		struct ion_custom_data custom;
 		struct ion_preload_data preload;
+		struct ion_heap_query query;
+		__u32 ion_abi_version;
 	} data;
 
 	dir = ion_ioctl_dir(cmd);
@@ -1847,9 +1904,37 @@ static long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		ret = ion_alloc_preload(client, data.preload.heap_id_mask,
 						data.preload.flags,
 						data.preload.count, obj);
-		kfree(obj);
-		return ret;
+		break;
 	}
+	case ION_IOC_NEW_ALLOC:
+	{
+		struct ion_handle *handle;
+		int fd;
+
+		handle = __ion_alloc(client, data.new_allocation.len,
+					0 /* align */,
+					data.new_allocation.heap_id_mask,
+					data.new_allocation.flags, true);
+		if (IS_ERR(handle))
+			return PTR_ERR(handle);
+
+		fd = ion_share_dma_buf_fd(client, handle);
+		/* Clean up the handle - dma-buf fd maintains buffer reference */
+		ion_free(client, handle);
+		ion_handle_put(client, handle);
+
+		if (fd < 0)
+			return fd;
+
+		data.new_allocation.fd = fd;
+		break;
+	}
+	case ION_IOC_HEAP_QUERY:
+		ret = ion_query_heaps(client, &data.query);
+		break;
+	case ION_IOC_ABI_VERSION:
+		data.ion_abi_version = ION_CURRENT_ABI_VERSION;
+		break;
 	default:
 		return -ENOTTY;
 	}

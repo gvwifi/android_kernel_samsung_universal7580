@@ -46,8 +46,10 @@ handle_t *__ext4_journal_start_sb(struct super_block *sb, unsigned int line,
 	might_sleep();
 
 	trace_ext4_journal_start(sb, nblocks, _RET_IP_);
-	if (sb->s_flags & MS_RDONLY && !journal_current_handle())
+	if (sb->s_flags & MS_RDONLY && !journal_current_handle()) {
+		pr_debug("EXT4-fs DEBUG: __ext4_journal_start_sb returning EROFS due to MS_RDONLY on %s\n", sb->s_id);
 		return ERR_PTR(-EROFS);
+	}
 
 	WARN_ON(sb->s_writers.frozen == SB_FREEZE_COMPLETE);
 	journal = EXT4_SB(sb)->s_journal;
@@ -59,6 +61,7 @@ handle_t *__ext4_journal_start_sb(struct super_block *sb, unsigned int line,
 	 * take the FS itself readonly cleanly.
 	 */
 	if (is_journal_aborted(journal)) {
+		pr_debug("EXT4-fs DEBUG: __ext4_journal_start_sb returning EROFS due to aborted journal on %s\n", sb->s_id);
 		ext4_abort(sb, "Detected aborted journal");
 		return ERR_PTR(-EROFS);
 	}

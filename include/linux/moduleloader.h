@@ -45,7 +45,7 @@ static inline int apply_relocate(Elf_Shdr *sechdrs,
 				 unsigned int relsec,
 				 struct module *me)
 {
-	printk(KERN_ERR "module %s: REL relocation unsupported\n", me->name);
+/*	printk(KERN_ERR "module %s: REL relocation unsupported\n", me->name); */
 	return -ENOEXEC;
 }
 #endif
@@ -67,7 +67,7 @@ static inline int apply_relocate_add(Elf_Shdr *sechdrs,
 				     unsigned int relsec,
 				     struct module *me)
 {
-	printk(KERN_ERR "module %s: REL relocation unsupported\n", me->name);
+/*	printk(KERN_ERR "module %s: REL relocation unsupported\n", me->name); */
 	return -ENOEXEC;
 }
 #endif

@@ -19,6 +19,7 @@
 /* #define VERBOSE_DEBUG */
 
 #include <linux/blkdev.h>
+#include <linux/module.h>
 #include <linux/pagemap.h>
 #include <linux/export.h>
 #include <linux/hid.h>
@@ -1303,7 +1304,6 @@ static struct file_system_type ffs_fs_type = {
 	.mount		= ffs_fs_mount,
 	.kill_sb	= ffs_fs_kill_sb,
 };
-MODULE_ALIAS_FS("functionfs");
 
 
 /* Driver's main init/cleanup functions *************************************/
@@ -2310,6 +2310,11 @@ static int ffs_func_bind(struct usb_configuration *c,
 	/* Make it a single chunk, less management later on */
 	void *data;
 	size_t s_eps, s_fs, s_hs, s_inums, s_raw;
+	struct ffs_ep *eps_ptr;
+	struct usb_descriptor_header **fs_descs_ptr;
+	struct usb_descriptor_header **hs_descs_ptr;
+	short *inums_ptr;
+	char *raw_descs_ptr;
 
 	s_eps = ffs->eps_count * sizeof(struct ffs_ep);
 	s_fs = (full ? ffs->fs_descs_count + 1 : 0) * sizeof(struct usb_descriptor_header *);
@@ -2329,11 +2334,11 @@ static int ffs_func_bind(struct usb_configuration *c,
 		return -ENOMEM;
 
 	/* Pointers setup */
-	struct ffs_ep *eps_ptr = data;
-	struct usb_descriptor_header **fs_descs_ptr = (void *)eps_ptr + s_eps;
-	struct usb_descriptor_header **hs_descs_ptr = (void *)fs_descs_ptr + s_fs;
-	short *inums_ptr = (void *)hs_descs_ptr + s_hs;
-	char *raw_descs_ptr = (void *)inums_ptr + s_inums;
+	eps_ptr = data;
+	fs_descs_ptr = (void *)eps_ptr + s_eps;
+	hs_descs_ptr = (void *)fs_descs_ptr + s_fs;
+	inums_ptr = (void *)hs_descs_ptr + s_hs;
+	raw_descs_ptr = (void *)inums_ptr + s_inums;
 
 	/* Zero */
 	memset(eps_ptr, 0, s_eps);
@@ -2587,3 +2592,26 @@ static char *ffs_prepare_buffer(const char __user *buf, size_t len)
 
 	return data;
 }
+
+/* Weak symbol implementations for legacy gadget compatibility */
+int __weak functionfs_ready_callback(struct ffs_data *ffs) { return 0; }
+void __weak functionfs_closed_callback(struct ffs_data *ffs) { }
+void *__weak functionfs_acquire_dev_callback(const char *dev_name) { return NULL; }
+void __weak functionfs_release_dev_callback(struct ffs_data *ffs_data) { }
+
+/* Module initialization for ConfigFS - registers FunctionFS filesystem */
+static int __init ffs_modinit(void)
+{
+return functionfs_init();
+}
+
+static void __exit ffs_modexit(void)
+{
+functionfs_cleanup();
+}
+
+module_init(ffs_modinit);
+module_exit(ffs_modexit);
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Michal Nazarewicz");
+MODULE_ALIAS_FS("functionfs");

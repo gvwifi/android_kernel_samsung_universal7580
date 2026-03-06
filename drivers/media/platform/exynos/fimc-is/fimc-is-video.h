@@ -45,23 +45,25 @@ struct fimc_is_subdev;
 struct fimc_is_queue;
 
 enum fimc_is_video_dev_num {
-	FIMC_IS_VIDEO_SS0_NUM	= 0,
-	FIMC_IS_VIDEO_SS1_NUM	= 1,
-	FIMC_IS_VIDEO_SS2_NUM	= 2,
-	FIMC_IS_VIDEO_SS3_NUM	= 3,
-	FIMC_IS_VIDEO_3A0_NUM	= 10,
-	FIMC_IS_VIDEO_3A0C_NUM	= 11,
-	FIMC_IS_VIDEO_3A0P_NUM	= 12,
-	FIMC_IS_VIDEO_3A1_NUM	= 14,
-	FIMC_IS_VIDEO_3A1C_NUM	= 15,
-	FIMC_IS_VIDEO_3A1P_NUM	= 16,
-	FIMC_IS_VIDEO_ISP_NUM	= 30,
-	FIMC_IS_VIDEO_SCC_NUM	= 34,
-	FIMC_IS_VIDEO_SCP_NUM	= 37,
-	FIMC_IS_VIDEO_VDC_NUM	= 40,
-	FIMC_IS_VIDEO_VDO_NUM	= 41,
-	FIMC_IS_VIDEO_FD_NUM	= 46,
-	FIMC_IS_VIDEO_MAX_NUM	= 49
+	/* device_num = EXYNOS_VIDEONODE_FIMC_IS(100) + value */
+	/* Must match HAL3 ExynosCamera3Config.h fimc_is_video_dev_num */
+	FIMC_IS_VIDEO_SS0_NUM	= 1,	/* /dev/video101 */
+	FIMC_IS_VIDEO_SS1_NUM	= 2,	/* /dev/video102 - gvwifi front camera */
+	FIMC_IS_VIDEO_SS2_NUM	= 3,	/* /dev/video103 */
+	FIMC_IS_VIDEO_SS3_NUM	= 4,	/* /dev/video104 */
+	FIMC_IS_VIDEO_3A0_NUM	= 10,	/* /dev/video110 */
+	FIMC_IS_VIDEO_3A0C_NUM	= 11,	/* /dev/video111 */
+	FIMC_IS_VIDEO_3A0P_NUM	= 12,	/* /dev/video112 */
+	FIMC_IS_VIDEO_3A1_NUM	= 20,	/* /dev/video120 */
+	FIMC_IS_VIDEO_3A1C_NUM	= 21,	/* /dev/video121 */
+	FIMC_IS_VIDEO_3A1P_NUM	= 22,	/* /dev/video122 */
+	FIMC_IS_VIDEO_ISP_NUM	= 30,	/* /dev/video130 */
+	FIMC_IS_VIDEO_VDC_NUM	= 50,	/* /dev/video150 - DIS/TPU */
+	FIMC_IS_VIDEO_SCC_NUM	= 51,	/* /dev/video151 */
+	FIMC_IS_VIDEO_SCP_NUM	= 52,	/* /dev/video152 - preview scaler */
+	FIMC_IS_VIDEO_VDO_NUM	= 41,	/* /dev/video141 */
+	FIMC_IS_VIDEO_FD_NUM	= 46,	/* /dev/video146 */
+	FIMC_IS_VIDEO_MAX_NUM	= 53	/* must be > all values above */
 };
 
 enum fimc_is_video_type {

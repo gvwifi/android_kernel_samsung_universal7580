@@ -593,6 +593,42 @@ exit:
  *
  * FIXME: error handling
  */
+#include <linux/sysfs.h>
+
+/**
+ * blk_mq_stub_init - create fake blk-mq sysfs entries
+ * @disk: gendisk of interest
+ *
+ * This creates sys/class/block/<dev>/mq/0/nr_tags to satisfy Android init.
+ */
+static ssize_t mq_nr_tags_show(struct kobject *kobj, struct kobj_attribute *attr,
+                              char *buf)
+{
+       return sprintf(buf, "128\n");
+}
+
+static struct kobj_attribute mq_nr_tags_attr =
+       __ATTR(nr_tags, 0444, mq_nr_tags_show, NULL);
+
+static void blk_mq_stub_init(struct gendisk *disk)
+{
+       struct kobject *mq_kobj, *ctx_kobj;
+       struct device *dev = disk_to_dev(disk);
+       int ret;
+
+       mq_kobj = kobject_create_and_add("mq", &dev->kobj);
+       if (!mq_kobj)
+               return;
+
+       ctx_kobj = kobject_create_and_add("0", mq_kobj);
+       if (!ctx_kobj)
+               return;
+
+       ret = sysfs_create_file(ctx_kobj, &mq_nr_tags_attr.attr);
+       if (ret)
+              pr_warn("blk_mq_stub: failed to create nr_tags: %d\n", ret);
+}
+
 void add_disk(struct gendisk *disk)
 {
 	struct backing_dev_info *bdi;
@@ -663,6 +699,7 @@ void add_disk(struct gendisk *disk)
 		bdi->ra_pages = min(bdi->ra_pages, size);
 	}
 
+	blk_mq_stub_init(disk);
 	disk_add_events(disk);
 }
 EXPORT_SYMBOL(add_disk);

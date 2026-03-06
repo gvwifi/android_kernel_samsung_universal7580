@@ -2384,9 +2384,11 @@ static int decon_ioctl(struct fb_info *info, unsigned int cmd,
 {
 	struct decon_win *win = info->par;
 	struct decon_device *decon = win->decon;
-	struct decon_win_config_data win_data = { 0 };
+	static struct decon_win_config_data win_data;
 	int ret = 0;
 	u32 crtc;
+
+	memset(&win_data, 0, sizeof(win_data));
 
 	/* enable lpd only when system is ready to interact with driver */
 	decon_lpd_enable();

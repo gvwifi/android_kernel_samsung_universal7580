@@ -15,6 +15,12 @@
 
 #define EXT4_KEY_DESCRIPTOR_SIZE 8
 
+#define EXT4_ENCRYPTION_MODE_INVALID		0
+#define EXT4_ENCRYPTION_MODE_AES_256_XTS	1
+#define EXT4_ENCRYPTION_MODE_AES_256_GCM	2
+#define EXT4_ENCRYPTION_MODE_AES_256_CBC	3
+#define EXT4_ENCRYPTION_MODE_AES_256_CTS	4
+
 /* Policy provided via an ioctl on the topmost directory */
 struct ext4_encryption_policy {
 	char version;
@@ -131,10 +137,7 @@ static inline int ext4_encryption_key_size(int mode)
 #define EXT4_CRYPTO_BLOCK_SIZE		16
 #define EXT4_FNAME_CRYPTO_DIGEST_SIZE	32
 
-struct ext4_str {
-	unsigned char *name;
-	u32 len;
-};
+
 
 /**
  * For encrypted symlinks, the ciphertext length is stored at the beginning
@@ -155,5 +158,11 @@ static inline u32 encrypted_symlink_data_len(u32 l)
 		l = EXT4_CRYPTO_BLOCK_SIZE;
 	return (l + sizeof(struct ext4_encrypted_symlink_data) - 1);
 }
+
+int ext4_process_policy(const struct ext4_encryption_policy *policy, struct inode *inode);
+int ext4_get_policy(struct inode *inode, struct ext4_encryption_policy *policy);
+int ext4_decrypt(struct ext4_crypto_ctx *ctx, struct page *page);
+struct ext4_crypto_ctx *ext4_get_crypto_ctx(struct inode *inode);
+void ext4_release_crypto_ctx(struct ext4_crypto_ctx *ctx);
 
 #endif	/* _EXT4_CRYPTO_H */

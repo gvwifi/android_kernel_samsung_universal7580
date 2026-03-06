@@ -36,7 +36,8 @@ void *return_address(unsigned int level)
 {
 	struct return_address_data data;
 	struct stackframe frame;
-	register unsigned long current_sp asm ("sp");
+	unsigned long current_sp;
+	asm volatile("mov %0, sp" : "=r" (current_sp));
 
 	data.level = level + 2;
 	data.addr = NULL;

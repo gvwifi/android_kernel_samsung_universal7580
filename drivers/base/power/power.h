@@ -89,6 +89,12 @@ extern void dpm_sysfs_remove(struct device *dev);
 extern void rpm_sysfs_remove(struct device *dev);
 extern int wakeup_sysfs_add(struct device *dev);
 extern void wakeup_sysfs_remove(struct device *dev);
+
+/* wakeup_stats.c - /sys/class/wakeup support */
+extern int wakeup_source_sysfs_add(struct device *parent, struct wakeup_source *ws);
+extern int pm_wakeup_source_sysfs_add(struct device *parent);
+extern void wakeup_source_sysfs_remove(struct wakeup_source *ws);
+
 extern int pm_qos_sysfs_add_latency(struct device *dev);
 extern void pm_qos_sysfs_remove_latency(struct device *dev);
 extern int pm_qos_sysfs_add_flags(struct device *dev);

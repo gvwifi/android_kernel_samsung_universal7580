@@ -149,6 +149,9 @@ void wakeup_source_add(struct wakeup_source *ws)
 	spin_lock_irqsave(&events_lock, flags);
 	list_add_rcu(&ws->entry, &wakeup_sources);
 	spin_unlock_irqrestore(&events_lock, flags);
+
+	/* Create /sys/class/wakeup/wakeupN entry */
+	wakeup_source_sysfs_add(NULL, ws);
 }
 EXPORT_SYMBOL_GPL(wakeup_source_add);
 
@@ -162,6 +165,9 @@ void wakeup_source_remove(struct wakeup_source *ws)
 
 	if (WARN_ON(!ws))
 		return;
+
+	/* Remove /sys/class/wakeup/wakeupN entry */
+	wakeup_source_sysfs_remove(ws);
 
 	spin_lock_irqsave(&events_lock, flags);
 	list_del_rcu(&ws->entry);

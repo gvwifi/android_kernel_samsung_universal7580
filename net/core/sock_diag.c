@@ -32,6 +32,23 @@ void sock_diag_save_cookie(void *sk, __u32 *cookie)
 }
 EXPORT_SYMBOL_GPL(sock_diag_save_cookie);
 
+/*
+ * Backported from Linux 4.13: generate or return a unique 64-bit cookie
+ * for use with SO_COOKIE getsockopt. Stored in sk->sk_cookie atomically.
+ */
+u64 sock_gen_cookie(struct sock *sk)
+{
+        while (1) {
+                u64 res = atomic64_read(&sk->sk_cookie);
+
+                if (res)
+                        return res;
+                res = atomic64_inc_return(&sock_net(sk)->cookie_gen);
+                atomic64_cmpxchg(&sk->sk_cookie, 0, res);
+        }
+}
+EXPORT_SYMBOL_GPL(sock_gen_cookie);
+
 int sock_diag_put_meminfo(struct sock *sk, struct sk_buff *skb, int attrtype)
 {
 	u32 mem[SK_MEMINFO_VARS];
@@ -65,7 +82,7 @@ int sock_diag_put_filterinfo(bool may_report_filterinfo, struct sock *sk,
 	rcu_read_lock();
 
 	filter = rcu_dereference(sk->sk_filter);
-	len = filter ? filter->len * sizeof(struct sock_filter) : 0;
+	len = 0; /* eBPF not supported in sock_diag yet */
 
 	attr = nla_reserve(skb, attrtype, len);
 	if (attr == NULL) {
@@ -74,11 +91,12 @@ int sock_diag_put_filterinfo(bool may_report_filterinfo, struct sock *sk,
 	}
 
 	if (filter) {
-		struct sock_filter *fb = (struct sock_filter *)nla_data(attr);
-		int i;
-
-		for (i = 0; i < filter->len; i++, fb++)
-			sk_decode_filter(&filter->insns[i], fb);
+		/* struct sock_filter *fb = (struct sock_filter *)nla_data(attr);
+		 * int i;
+		 *
+		 * for (i = 0; i < filter->len; i++, fb++)
+		 *	sk_decode_filter(&filter->insns[i], fb);
+		 */
 	}
 
 out:

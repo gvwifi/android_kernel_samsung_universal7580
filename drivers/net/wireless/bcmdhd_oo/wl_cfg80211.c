@@ -11459,7 +11459,7 @@ wl_cfg80211_sched_scan_start(struct wiphy *wiphy,
 	struct cfg80211_ssid *hidden_ssid_list = NULL;
 	log_conn_event_t *event_data = NULL;
 	tlv_log *tlv_data = NULL;
-	u32 alloc_len, tlv_len;
+	u32 alloc_len = 0, tlv_len = 0;
 	u32 payload_len;
 	int ssid_cnt = 0;
 	int i;
@@ -15505,7 +15505,7 @@ wl_notify_sched_scan_results(struct bcm_cfg80211 *cfg, struct net_device *ndev,
 	int n_pfn_results = 0;
 	log_conn_event_t *event_data = NULL;
 	tlv_log *tlv_data = NULL;
-	u32 alloc_len, tlv_len;
+	u32 alloc_len = 0, tlv_len = 0;
 	u32 payload_len;
 
 	WL_DBG(("Enter\n"));

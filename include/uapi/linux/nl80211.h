@@ -1827,6 +1827,42 @@ enum nl80211_attrs {
 
 	NL80211_ATTR_VENDOR_EVENTS,
 
+	NL80211_ATTR_QOS_MAP,
+
+	NL80211_ATTR_MAC_HINT,
+	NL80211_ATTR_WIPHY_FREQ_HINT,
+
+	NL80211_ATTR_MAX_AP_ASSOC_STA,
+
+	NL80211_ATTR_TDLS_PEER_CAPABILITY,
+
+	NL80211_ATTR_SOCKET_OWNER,
+
+	NL80211_ATTR_CSA_C_OFFSETS_TX,
+	NL80211_ATTR_MAX_CSA_COUNTERS,
+
+	NL80211_ATTR_TDLS_INITIATOR,
+
+	NL80211_ATTR_USE_RRM,
+
+	NL80211_ATTR_WIPHY_DYN_ACK,
+
+	NL80211_ATTR_TSID,
+	NL80211_ATTR_USER_PRIO,
+	NL80211_ATTR_ADMITTED_TIME,
+
+	NL80211_ATTR_SMPS_MODE,
+
+	NL80211_ATTR_OPER_CLASS,
+
+	NL80211_ATTR_MAC_MASK,
+
+	NL80211_ATTR_WIPHY_SELF_MANAGED_REG,
+
+	NL80211_ATTR_EXT_FEATURES,
+
+	NL80211_ATTR_MAX_NUM_AKM_SUITES = 316,
+
 	/* add attributes here, update the policy in nl80211.c */
 
 	__NL80211_ATTR_AFTER_LAST,
@@ -3848,4 +3884,44 @@ struct nl80211_vendor_cmd_info {
 	__u32 subcmd;
 };
 
+/**
+ * enum nl80211_ext_feature_index - bit index of extended features.
+ * @NL80211_EXT_FEATURE_VHT_IBSS: This driver supports IBSS with VHT datarates.
+ * @NL80211_EXT_FEATURE_RRM: This driver supports RRM.
+ * @NL80211_EXT_FEATURE_MU_MIMO_AIR_SNIFFER: This device supports MU-MIMO air
+ *	sniffer which means that it can be configured to hear packets from
+ *	certain groups which can be configured by the
+ *	%NL80211_ATTR_MU_MIMO_GROUP_DATA attribute.
+ * @NL80211_EXT_FEATURE_SCAN_START_TIME: This driver includes the actual
+ *	time the scan started in the scan results.
+ * @NL80211_EXT_FEATURE_BSS_PARENT_TSF: Per BSS, this driver reports the
+ *	time the last beacon/probe was received.
+ * @NL80211_EXT_FEATURE_SET_SCAN_DWELL: This driver supports configuration of
+ *	channel dwell time.
+ * @NL80211_EXT_FEATURE_BEACON_RATE_LEGACY: Driver supports beacon rate
+ *	configuration (AP/mesh), supporting a legacy (non HT/VHT) rate.
+ * @NL80211_EXT_FEATURE_BEACON_RATE_HT: Driver supports beacon rate
+ *	configuration (AP/mesh) with HT rates.
+ * @NL80211_EXT_FEATURE_BEACON_RATE_VHT: Driver supports beacon rate
+ *	configuration (AP/mesh) with VHT rates.
+ * @NUM_NL80211_EXT_FEATURES: number of extended features.
+ * @MAX_NL80211_EXT_FEATURES: highest extended feature index.
+ */
+enum nl80211_ext_feature_index {
+	NL80211_EXT_FEATURE_VHT_IBSS,
+	NL80211_EXT_FEATURE_RRM,
+	NL80211_EXT_FEATURE_MU_MIMO_AIR_SNIFFER,
+	NL80211_EXT_FEATURE_SCAN_START_TIME,
+	NL80211_EXT_FEATURE_BSS_PARENT_TSF,
+	NL80211_EXT_FEATURE_SET_SCAN_DWELL,
+	NL80211_EXT_FEATURE_BEACON_RATE_LEGACY,
+	NL80211_EXT_FEATURE_BEACON_RATE_HT,
+	NL80211_EXT_FEATURE_BEACON_RATE_VHT,
+
+	/* add new features before the definition below */
+	NUM_NL80211_EXT_FEATURES,
+	MAX_NL80211_EXT_FEATURES = NUM_NL80211_EXT_FEATURES - 1
+};
+
 #endif /* __LINUX_NL80211_H */
+

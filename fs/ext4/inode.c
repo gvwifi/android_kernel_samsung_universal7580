@@ -2504,8 +2504,10 @@ static int ext4_da_writepages(struct address_space *mapping,
 	 * *never* be called, so if that ever happens, we would want
 	 * the stack trace.
 	 */
-	if (unlikely(sbi->s_mount_flags & EXT4_MF_FS_ABORTED))
+	if (unlikely(sbi->s_mount_flags & EXT4_MF_FS_ABORTED)) {
+		pr_debug("EXT4-fs DEBUG: ext4_da_writepages returning EROFS due to EXT4_MF_FS_ABORTED on %s\n", inode->i_sb->s_id);
 		return -EROFS;
+	}
 
 	if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
 		range_whole = 1;
@@ -3019,8 +3021,20 @@ static int ext4_readpage(struct file *file, struct page *page)
 	if (ext4_has_inline_data(inode))
 		ret = ext4_readpage_inline(inode, page);
 
-	if (ret == -EAGAIN)
+	if (ret == -EAGAIN) {
+		/*
+		 * For verity inodes, use ext4_mpage_readpages which does NOT
+		 * clamp reads to i_size.  Verity metadata (Merkle tree and
+		 * descriptor) is stored past i_size in the extent tree.
+		 * The generic mpage_readpage() zero-fills pages past i_size,
+		 * causing pagecache_read() in verity.c to read all zeros
+		 * for desc_size → -EUCLEAN on every reboot.
+		 */
+		if (IS_VERITY(inode))
+			return ext4_mpage_readpages(page->mapping,
+						    NULL, page, 1);
 		return mpage_readpage(page, ext4_get_block);
+	}
 
 	return ret;
 }
@@ -3034,6 +3048,14 @@ ext4_readpages(struct file *file, struct address_space *mapping,
 	/* If the file has inline data, no need to do readpages. */
 	if (ext4_has_inline_data(inode))
 		return 0;
+
+	/*
+	 * For verity inodes, use ext4_mpage_readpages which allows
+	 * reading blocks past i_size (verity metadata).  The generic
+	 * mpage_readpages() clamps to i_size and zero-fills those pages.
+	 */
+	if (IS_VERITY(inode))
+		return ext4_mpage_readpages(mapping, pages, NULL, nr_pages);
 
 	return mpage_readpages(mapping, pages, nr_pages, ext4_get_block);
 }
@@ -4121,8 +4143,12 @@ void ext4_set_inode_flags(struct inode *inode)
 		new_fl |= S_NOATIME;
 	if (flags & EXT4_DIRSYNC_FL)
 		new_fl |= S_DIRSYNC;
+	if (flags & EXT4_VERITY_FL)
+		new_fl |= S_VERITY;
+	if (flags & EXT4_ENCRYPT_FL)
+		new_fl |= S_ENCRYPTED;
 	set_mask_bits(&inode->i_flags,
-		      S_SYNC|S_APPEND|S_IMMUTABLE|S_NOATIME|S_DIRSYNC, new_fl);
+		      S_SYNC|S_APPEND|S_IMMUTABLE|S_NOATIME|S_DIRSYNC|S_VERITY|S_ENCRYPTED, new_fl);
 }
 
 /* Propagate flags from i_flags to EXT4_I(inode)->i_flags */
@@ -4136,7 +4162,7 @@ void ext4_get_inode_flags(struct ext4_inode_info *ei)
 		old_fl = ei->i_flags;
 		new_fl = old_fl & ~(EXT4_SYNC_FL|EXT4_APPEND_FL|
 				EXT4_IMMUTABLE_FL|EXT4_NOATIME_FL|
-				EXT4_DIRSYNC_FL);
+				EXT4_DIRSYNC_FL|EXT4_ENCRYPT_FL);
 		if (vfs_fl & S_SYNC)
 			new_fl |= EXT4_SYNC_FL;
 		if (vfs_fl & S_APPEND)
@@ -4147,6 +4173,10 @@ void ext4_get_inode_flags(struct ext4_inode_info *ei)
 			new_fl |= EXT4_NOATIME_FL;
 		if (vfs_fl & S_DIRSYNC)
 			new_fl |= EXT4_DIRSYNC_FL;
+		if (vfs_fl & S_VERITY)
+			new_fl |= EXT4_VERITY_FL;
+		if (vfs_fl & S_ENCRYPTED)
+			new_fl |= EXT4_ENCRYPT_FL;
 	} while (cmpxchg(&ei->i_flags, old_fl, new_fl) != old_fl);
 }
 

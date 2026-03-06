@@ -163,16 +163,75 @@ struct ion_preload_data {
 	struct ion_preload_object *obj;
 };
 
+#define MAX_HEAP_NAME			32
+
+/**
+ * struct ion_new_allocation_data - metadata for modern ION alloc
+ * @len:		size of the allocation
+ * @heap_id_mask:	mask of heap ids to allocate from
+ * @flags:		flags passed to heap
+ * @fd:			file descriptor for the allocation (output)
+ * @unused:		for future use, must be zero
+ *
+ * This is the "modern" ION allocation interface (kernel 4.12+) that
+ * returns a dma-buf fd directly instead of an ion_handle.
+ */
+struct ion_new_allocation_data {
+	__u64 len;
+	__u32 heap_id_mask;
+	__u32 flags;
+	__u32 fd;
+	__u32 unused;
+};
+
+/**
+ * struct ion_heap_data - data about a heap
+ * @name - first 32 characters of the heap name
+ * @type - heap type
+ * @heap_id - heap id for the heap
+ */
+struct ion_heap_data {
+	char name[MAX_HEAP_NAME];
+	__u32 type;
+	__u32 heap_id;
+	__u32 reserved0;
+	__u32 reserved1;
+	__u32 reserved2;
+};
+
+/**
+ * struct ion_heap_query - collection of data about all heaps
+ * @cnt - total number of heaps to be copied
+ * @heaps - buffer to copy heap data
+ */
+struct ion_heap_query {
+	__u32 cnt; /* Total number of heaps to be copied */
+	__u32 reserved0; /* align to 64bits */
+	__u64 heaps; /* buffer to be populated */
+	__u32 reserved1;
+	__u32 reserved2;
+};
+
 #define ION_IOC_MAGIC		'I'
 
 /**
- * DOC: ION_IOC_ALLOC - allocate memory
+ * DOC: ION_IOC_ALLOC - allocate memory (legacy)
  *
  * Takes an ion_allocation_data struct and returns it with the handle field
  * populated with the opaque handle for the allocation.
  */
 #define ION_IOC_ALLOC		_IOWR(ION_IOC_MAGIC, 0, \
 				      struct ion_allocation_data)
+
+/**
+ * DOC: ION_IOC_NEW_ALLOC - allocate memory (modern, kernel 4.12+ compatible)
+ *
+ * Takes an ion_new_allocation_data struct and returns it with the fd field
+ * populated with a dma-buf file descriptor for the allocation.
+ * This is the modern ION interface that doesn't use ion handles.
+ */
+#define ION_IOC_NEW_ALLOC	_IOWR(ION_IOC_MAGIC, 0, \
+				      struct ion_new_allocation_data)
 
 /**
  * DOC: ION_IOC_FREE - free memory
@@ -223,9 +282,26 @@ struct ion_preload_data {
 #define ION_IOC_SYNC_PARTIAL	_IOWR(ION_IOC_MAGIC, 9, struct ion_fd_partial_data)
 
 /**
+ * DOC: ION_IOC_HEAP_QUERY - information about available heaps
+ *
+ * Takes an ion_heap_query structure and populates information about
+ * available Ion heaps.
+ */
+#define ION_IOC_HEAP_QUERY	_IOWR(ION_IOC_MAGIC, 8, \
+					struct ion_heap_query)
+
+/**
+ * DOC: ION_IOC_ABI_VERSION - return ABI version
+ *
+ * Returns ABI version for this driver
+ */
+#define ION_IOC_ABI_VERSION	_IOR(ION_IOC_MAGIC, 9, \
+					__u32)
+
+/**
  * DOC: ION_IOC_PRELOAD_ALLOC - prefetches pages to page pool
  */
-#define ION_IOC_PRELOAD_ALLOC	_IOW(ION_IOC_MAGIC, 8, struct ion_preload_data)
+#define ION_IOC_PRELOAD_ALLOC	_IOW(ION_IOC_MAGIC, 10, struct ion_preload_data)
 
 /**
  * DOC: ION_IOC_CUSTOM - call architecture specific ion ioctl

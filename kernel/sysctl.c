@@ -112,6 +112,7 @@ extern int percpu_pagelist_fraction;
 extern int compat_log;
 extern int latencytop_enabled;
 extern int sysctl_nr_open_min, sysctl_nr_open_max;
+extern int sysctl_unprivileged_bpf_disabled;
 #ifndef CONFIG_MMU
 extern int sysctl_nr_trim_pages;
 #endif
@@ -595,6 +596,13 @@ static struct ctl_table kern_table[] = {
 		.procname	= "ctrl-alt-del",
 		.data		= &C_A_D,
 		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "unprivileged_bpf_disabled",
+		.data		= &sysctl_unprivileged_bpf_disabled,
+		.maxlen		= sizeof(sysctl_unprivileged_bpf_disabled),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},

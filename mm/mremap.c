@@ -465,7 +465,11 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 
 	down_write(&current->mm->mmap_sem);
 
-	if (flags & ~(MREMAP_FIXED | MREMAP_MAYMOVE))
+	if (flags & ~(MREMAP_FIXED | MREMAP_MAYMOVE | MREMAP_DONTUNMAP))
+		goto out;
+
+	/* MREMAP_DONTUNMAP requires MREMAP_MAYMOVE */
+	if ((flags & MREMAP_DONTUNMAP) && !(flags & MREMAP_MAYMOVE))
 		goto out;
 
 	if (addr & ~PAGE_MASK)
@@ -482,19 +486,26 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 	if (!new_len)
 		goto out;
 
+	/* MREMAP_DONTUNMAP does not allow resizing */
+	if ((flags & MREMAP_DONTUNMAP) && old_len != new_len)
+		goto out;
+
 	if (flags & MREMAP_FIXED) {
 		if (flags & MREMAP_MAYMOVE)
 			ret = mremap_to(addr, old_len, new_addr, new_len,
 					&locked);
-		goto out;
+		goto out_dontunmap;
 	}
 
 	/*
 	 * Always allow a shrinking remap: that just unmaps
 	 * the unnecessary pages..
 	 * do_munmap does all the needed commit accounting
+	 *
+	 * Skip this shortcut for MREMAP_DONTUNMAP since we want to
+	 * force a move even when old_len == new_len.
 	 */
-	if (old_len >= new_len) {
+	if (old_len >= new_len && !(flags & MREMAP_DONTUNMAP)) {
 		ret = do_munmap(mm, addr+new_len, old_len - new_len);
 		if (ret && old_len != new_len)
 			goto out;
@@ -503,7 +514,7 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 	}
 
 	/*
-	 * Ok, we need to grow..
+	 * Ok, we need to grow (or move for MREMAP_DONTUNMAP)..
 	 */
 	vma = vma_to_resize(addr, old_len, new_len, &charged);
 	if (IS_ERR(vma)) {
@@ -512,8 +523,10 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 	}
 
 	/* old_len exactly to the end of the area..
+	 * Skip in-place expansion for MREMAP_DONTUNMAP (we want to move).
 	 */
-	if (old_len == vma->vm_end - addr) {
+	if (old_len == vma->vm_end - addr &&
+	    !(flags & MREMAP_DONTUNMAP)) {
 		/* can we just expand the current mapping? */
 		if (vma_expandable(vma, new_len - old_len)) {
 			int pages = (new_len - old_len) >> PAGE_SHIFT;
@@ -555,6 +568,21 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 		}
 
 		ret = move_vma(vma, addr, old_len, new_len, new_addr, &locked);
+	}
+out_dontunmap:
+	/*
+	 * For MREMAP_DONTUNMAP: after the move succeeds, create a fresh
+	 * anonymous zero-filled mapping at the old address to replace what
+	 * move_vma unmapped. This is the key semantic of DONTUNMAP - the
+	 * source address remains mapped (but with zeroed content).
+	 */
+	if ((flags & MREMAP_DONTUNMAP) && !(ret & ~PAGE_MASK)) {
+		unsigned long populate = 0;
+		do_mmap_pgoff(NULL, addr, old_len,
+			      PROT_READ | PROT_WRITE,
+			      MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, 0,
+			      &populate);
+		/* Best effort - if this fails, the move still succeeded */
 	}
 out:
 	if (ret & ~PAGE_MASK)

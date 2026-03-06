@@ -629,6 +629,7 @@ static void disarm_sock_keys(struct mem_cgroup *memcg)
  */
 static DEFINE_IDA(kmem_limited_groups);
 int memcg_limited_groups_array_size;
+EXPORT_SYMBOL(memcg_limited_groups_array_size);
 
 /*
  * MIN_SIZE is different than 1, because we would like to avoid going through

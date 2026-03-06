@@ -48,8 +48,13 @@ static void ion_page_pool_free_pages(struct ion_page_pool *pool,
 static int ion_page_pool_add(struct ion_page_pool *pool, struct page *page)
 {
 #ifdef CONFIG_DEBUG_LIST
-	BUG_ON(page->lru.next != LIST_POISON1 ||
-			page->lru.prev != LIST_POISON2);
+	if (WARN_ONCE(page->lru.next != LIST_POISON1 ||
+			page->lru.prev != LIST_POISON2,
+			"ION: page %p still linked (next=%p prev=%p), forcing delink\n",
+			page, page->lru.next, page->lru.prev)) {
+		/* Force delink to prevent corruption */
+		INIT_LIST_HEAD(&page->lru);
+	}
 #endif
 	if (pool->cached)
 		ion_clear_page_clean(page);

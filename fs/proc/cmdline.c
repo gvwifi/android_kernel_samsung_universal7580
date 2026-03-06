@@ -24,9 +24,27 @@ static const struct file_operations cmdline_proc_fops = {
 	.release	= single_release,
 };
 
+/* Parasetam0l: bootconfig stub */
+static int bootconfig_proc_show(struct seq_file *m, void *v)
+{
+	return 0;
+}
+
+static int bootconfig_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, bootconfig_proc_show, NULL);
+}
+
+static const struct file_operations bootconfig_proc_fops = {
+	.open		= bootconfig_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 static void __maybe_unused proc_cmdline_set(char *name, char *value)
 {
-	char flag_str[COMMAND_LINE_SIZE];
+	static char flag_str[COMMAND_LINE_SIZE];
 	char *flag_substr;
 	char *flag_space_substr;
 
@@ -55,6 +73,9 @@ static int __init proc_cmdline_init(void)
 #endif
 
 	proc_create("cmdline", 0, NULL, &cmdline_proc_fops);
+
+	/* Parasetam0l: bootconfig stub */
+	proc_create("bootconfig", 0, NULL, &bootconfig_proc_fops);
 	return 0;
 }
 module_init(proc_cmdline_init);

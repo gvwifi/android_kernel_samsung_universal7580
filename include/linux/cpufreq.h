@@ -140,6 +140,11 @@ struct cpufreq_policy {
 
 	struct kobject		kobj;
 	struct completion	kobj_unregister;
+
+	/* Node for cpufreq_offline_policies list - keeps policy alive
+	 * (sysfs intact, cur=0) when all CPUs in the cluster go offline,
+	 * so CpuMonitorService can still access policy directories. */
+	struct list_head	offline_node;
 };
 
 #define CPUFREQ_ADJUST			(0)

@@ -34,6 +34,7 @@
 #include <linux/cpuset.h>
 #include <linux/compaction.h>
 #include <linux/notifier.h>
+#include <linux/psi.h>
 #include <linux/rwsem.h>
 #include <linux/delay.h>
 #include <linux/kthread.h>
@@ -2796,10 +2797,12 @@ static unsigned long balance_pgdat(pg_data_t *pgdat, int order,
 	struct shrink_control shrink = {
 		.gfp_mask = sc.gfp_mask,
 	};
+	unsigned long pflags;
 loop_again:
 	sc.priority = DEF_PRIORITY;
 	sc.nr_reclaimed = 0;
 	sc.may_writepage = !laptop_mode;
+	psi_memstall_enter(&pflags);
 	count_vm_event(PAGEOUTRUN);
 
 	do {
@@ -2975,6 +2978,7 @@ loop_again:
 	} while (--sc.priority >= 0);
 
 out:
+	psi_memstall_leave(&pflags);
 	if (!pgdat_is_balanced) {
 		cond_resched();
 

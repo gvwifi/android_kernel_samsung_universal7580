@@ -27,7 +27,7 @@
 # Basic feature
 #####################
 
-DHDCFLAGS += -Wall -Wstrict-prototypes -Dlinux -DLINUX -DBCMDRIVER      \
+DHDCFLAGS += -Wall -Wstrict-prototypes -Wno-unused-function -Wno-parentheses-equality -Wno-unused-const-variable -Wno-unused-but-set-variable -Wno-misleading-indentation -Dlinux -DLINUX -DBCMDRIVER      \
         -DBCMDONGLEHOST -DUNRELEASEDCHIP -DBCMDMA32 -DBCMFILEIMAGE      \
         -DDHDTHREAD -DDHD_BCMEVENTS -DSHOW_EVENTS -DBCMDBG -DWLP2P      \
         -DWIFI_ACT_FRAME -DARP_OFFLOAD_SUPPORT -DKEEP_ALIVE -DCSCAN     \
@@ -1137,6 +1137,8 @@ EXTRA_CFLAGS += -DSRCBASE=\"$(src)\"
 EXTRA_CFLAGS += -I$(src)/include/ -I$(src)/
 EXTRA_CFLAGS += $(call cc-option, -Wunused-but-set-variable)
 EXTRA_CFLAGS += $(call cc-option, -Wmaybe-uninitialized)
+# Suppress warnings that are errors with clang + -Werror
+EXTRA_CFLAGS += -Wno-unused-but-set-variable
 KBUILD_CFLAGS += -I$(LINUXDIR)/include -I$(CURDIR)
 
 DHDOFILES := dhd_pno.o dhd_common.o dhd_ip.o dhd_custom_gpio.o dhd_custom_sec.o \

@@ -81,7 +81,7 @@ out:
 }
 
 static int validate_user_key(struct fscrypt_info *crypt_info,
-			struct fscrypt_context *ctx, u8 *raw_key,
+			struct fscrypt_context_v1 *ctx, u8 *raw_key,
 			const char *prefix, int min_keysize)
 {
 	char *description;
@@ -259,10 +259,76 @@ void __exit fscrypt_essiv_cleanup(void)
 	crypto_free_shash(essiv_hash_tfm);
 }
 
+/*
+ * setup_v2_file_key - derive a per-file encryption key for a v2 fscrypt policy
+ *
+ * For v2 policies the per-file key is derived from the master key stored in
+ * the filesystem keyring using HKDF-Expand:
+ *   info = (HKDF_CONTEXT_PER_FILE_ENC_KEY || file_nonce)
+ */
+static int setup_v2_file_key(struct fscrypt_info *crypt_info,
+			     const struct fscrypt_context_v2 *ctx,
+			     struct inode *inode,
+			     u8 *raw_key, int keysize)
+{
+	struct fscrypt_key_specifier mk_spec;
+	struct key *key;
+	struct fscrypt_master_key *mk;
+	int res;
+
+	mk_spec.type = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
+	memset(&mk_spec.u, 0, sizeof(mk_spec.u));
+	memcpy(mk_spec.u.identifier, ctx->master_key_identifier,
+	       FSCRYPT_KEY_IDENTIFIER_SIZE);
+
+	key = fscrypt_find_master_key(inode->i_sb, &mk_spec);
+	if (IS_ERR(key)) {
+		pr_debug("fscrypt: v2 key not found (inode %lu): %ld\n",
+			 inode->i_ino, PTR_ERR(key));
+		return PTR_ERR(key);
+	}
+
+	mk = (struct fscrypt_master_key *)key->payload.data;
+	down_read(&mk->mk_secret_sem);
+
+	if (!is_master_key_secret_present(&mk->mk_secret)) {
+		res = -ENOKEY;
+		goto out_release;
+	}
+
+	if (!mk->mk_secret.hkdf.hmac_tfm) {
+		/* Shouldn't happen for v2 keys - HKDF is set at add time */
+		pr_warn_ratelimited(
+			"fscrypt: v2 master key missing HKDF (inode %lu)\n",
+			inode->i_ino);
+		res = -EINVAL;
+		goto out_release;
+	}
+
+	if (mk->mk_secret.size < (u32)keysize) {
+		pr_warn_ratelimited(
+			"fscrypt: v2 master key too short (%u < %d) for inode %lu\n",
+			mk->mk_secret.size, keysize, inode->i_ino);
+		res = -ENOKEY;
+		goto out_release;
+	}
+
+	res = fscrypt_hkdf_expand(&mk->mk_secret.hkdf,
+				  HKDF_CONTEXT_PER_FILE_ENC_KEY,
+				  ctx->nonce,
+				  FS_KEY_DERIVATION_NONCE_SIZE,
+				  raw_key, keysize);
+
+out_release:
+	up_read(&mk->mk_secret_sem);
+	key_put(key);
+	return res;
+}
+
 int fscrypt_get_encryption_info(struct inode *inode)
 {
 	struct fscrypt_info *crypt_info;
-	struct fscrypt_context ctx;
+	union fscrypt_context ctx;
 	struct crypto_ablkcipher *ctfm;
 	const char *cipher_str;
 	int keysize;
@@ -281,33 +347,60 @@ int fscrypt_get_encryption_info(struct inode *inode)
 		if (!fscrypt_dummy_context_enabled(inode) ||
 		    inode->i_sb->s_cop->is_encrypted(inode))
 			return res;
-		/* Fake up a context for an unencrypted directory */
+		/* Fake up a v1 context for an unencrypted directory */
 		memset(&ctx, 0, sizeof(ctx));
-		ctx.format = FS_ENCRYPTION_CONTEXT_FORMAT_V1;
-		ctx.contents_encryption_mode = FS_ENCRYPTION_MODE_AES_256_XTS;
-		ctx.filenames_encryption_mode = FS_ENCRYPTION_MODE_AES_256_CTS;
-		memset(ctx.master_key_descriptor, 0x42, FS_KEY_DESCRIPTOR_SIZE);
-	} else if (res != sizeof(ctx)) {
+		ctx.v1.format = FS_ENCRYPTION_CONTEXT_FORMAT_V1;
+		ctx.v1.contents_encryption_mode =
+			FS_ENCRYPTION_MODE_AES_256_XTS;
+		ctx.v1.filenames_encryption_mode =
+			FS_ENCRYPTION_MODE_AES_256_CTS;
+		memset(ctx.v1.master_key_descriptor, 0x42,
+		       FS_KEY_DESCRIPTOR_SIZE);
+	} else if (!fscrypt_context_is_valid(&ctx, res)) {
+		pr_debug("fscrypt: invalid context size %d for inode %lu\n",
+			 res, inode->i_ino);
 		return -EINVAL;
 	}
-
-	if (ctx.format != FS_ENCRYPTION_CONTEXT_FORMAT_V1)
-		return -EINVAL;
-
-	if (ctx.flags & ~FS_POLICY_FLAGS_VALID)
-		return -EINVAL;
 
 	crypt_info = kmem_cache_alloc(fscrypt_info_cachep, GFP_NOFS);
 	if (!crypt_info)
 		return -ENOMEM;
 
-	crypt_info->ci_flags = ctx.flags;
-	crypt_info->ci_data_mode = ctx.contents_encryption_mode;
-	crypt_info->ci_filename_mode = ctx.filenames_encryption_mode;
 	crypt_info->ci_ctfm = NULL;
 	crypt_info->ci_essiv_tfm = NULL;
-	memcpy(crypt_info->ci_master_key, ctx.master_key_descriptor,
-				sizeof(crypt_info->ci_master_key));
+	crypt_info->ci_master_key_ptr = NULL;
+	memset(crypt_info->ci_nonce, 0, sizeof(crypt_info->ci_nonce));
+	memset(crypt_info->ci_master_key, 0, sizeof(crypt_info->ci_master_key));
+
+	switch (ctx.version) {
+	case FSCRYPT_CONTEXT_V1:
+		crypt_info->ci_flags = ctx.v1.flags;
+		crypt_info->ci_data_mode = ctx.v1.contents_encryption_mode;
+		crypt_info->ci_filename_mode = ctx.v1.filenames_encryption_mode;
+		memcpy(crypt_info->ci_master_key, ctx.v1.master_key_descriptor,
+		       sizeof(crypt_info->ci_master_key));
+		memcpy(crypt_info->ci_nonce, ctx.v1.nonce,
+		       FS_KEY_DERIVATION_NONCE_SIZE);
+		if (ctx.v1.flags & ~FS_POLICY_FLAGS_VALID) {
+			res = -EINVAL;
+			goto out;
+		}
+		break;
+	case FSCRYPT_CONTEXT_V2:
+		crypt_info->ci_flags = ctx.v2.flags;
+		crypt_info->ci_data_mode = ctx.v2.contents_encryption_mode;
+		crypt_info->ci_filename_mode = ctx.v2.filenames_encryption_mode;
+		memcpy(crypt_info->ci_nonce, ctx.v2.nonce,
+		       FS_KEY_DERIVATION_NONCE_SIZE);
+		if (ctx.v2.flags & ~FS_POLICY_FLAGS_VALID) {
+			res = -EINVAL;
+			goto out;
+		}
+		break;
+	default:
+		res = -EINVAL;
+		goto out;
+	}
 
 	res = determine_cipher_type(crypt_info, inode, &cipher_str, &keysize);
 	if (res)
@@ -322,20 +415,31 @@ int fscrypt_get_encryption_info(struct inode *inode)
 	if (!raw_key)
 		goto out;
 
-	res = validate_user_key(crypt_info, &ctx, raw_key, FS_KEY_DESC_PREFIX,
-				keysize);
-	if (res && inode->i_sb->s_cop->key_prefix) {
-		int res2 = validate_user_key(crypt_info, &ctx, raw_key,
-					     inode->i_sb->s_cop->key_prefix,
-					     keysize);
-		if (res2) {
-			if (res2 == -ENOKEY)
-				res = -ENOKEY;
+	if (ctx.version == FSCRYPT_CONTEXT_V1) {
+		/* v1: look up the key by descriptor in user/session keyrings */
+		res = validate_user_key(crypt_info, &ctx.v1, raw_key,
+					FS_KEY_DESC_PREFIX, keysize);
+		if (res && inode->i_sb->s_cop->key_prefix) {
+			int res2 = validate_user_key(
+					crypt_info, &ctx.v1, raw_key,
+					inode->i_sb->s_cop->key_prefix,
+					keysize);
+			if (res2) {
+				if (res2 == -ENOKEY)
+					res = -ENOKEY;
+				goto out;
+			}
+		} else if (res) {
 			goto out;
 		}
-	} else if (res) {
-		goto out;
+	} else {
+		/* v2: look up key by identifier in filesystem keyring + HKDF */
+		res = setup_v2_file_key(crypt_info, &ctx.v2, inode,
+					raw_key, keysize);
+		if (res)
+			goto out;
 	}
+
 	ctfm = crypto_alloc_ablkcipher(cipher_str, 0, 0);
 	if (!ctfm || IS_ERR(ctfm)) {
 		res = ctfm ? PTR_ERR(ctfm) : -ENOMEM;

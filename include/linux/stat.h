@@ -18,19 +18,26 @@
 #include <linux/time.h>
 #include <linux/uidgid.h>
 
+/* Query flags for vfs_getattr / statx */
+#define KSTAT_QUERY_FLAGS (AT_STATX_SYNC_TYPE)
+
 struct kstat {
-	u64		ino;
-	dev_t		dev;
+	u32		result_mask;	/* What fields the user got */
 	umode_t		mode;
 	unsigned int	nlink;
+	uint32_t	blksize;	/* Preferred I/O size */
+	u64		attributes;
+	u64		attributes_mask;
+	u64		ino;
+	dev_t		dev;
+	dev_t		rdev;
 	kuid_t		uid;
 	kgid_t		gid;
-	dev_t		rdev;
 	loff_t		size;
-	struct timespec  atime;
+	struct timespec	atime;
 	struct timespec	mtime;
 	struct timespec	ctime;
-	unsigned long	blksize;
+	struct timespec	btime;		/* File creation time */
 	unsigned long long	blocks;
 };
 

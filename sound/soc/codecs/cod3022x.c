@@ -3439,7 +3439,7 @@ static void cod3022x_cfg_gpio(struct device *dev, const char *name)
 
 	return;
 err:
-	dev_err(dev, "Unable to configure codec gpio as %s\n", name);
+	dev_dbg(dev, "Unable to configure codec gpio as %s\n", name);
 	return;
 }
 

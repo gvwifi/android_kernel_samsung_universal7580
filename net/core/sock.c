@@ -132,12 +132,14 @@
 #include <net/protocol.h>
 #include <linux/skbuff.h>
 #include <net/net_namespace.h>
+#include <linux/sock_diag.h>
 #include <net/request_sock.h>
 #include <net/sock.h>
 #include <linux/net_tstamp.h>
 #include <net/xfrm.h>
 #include <linux/ipsec.h>
 #include <net/cls_cgroup.h>
+#include <linux/cgroup.h>
 #include <net/netprio_cgroup.h>
 
 #include <linux/filter.h>
@@ -985,6 +987,7 @@ int sock_getsockopt(struct socket *sock, int level, int optname,
 
 	union {
 		int val;
+		u64 val64;
 		struct linger ling;
 		struct timeval tm;
 	} v;
@@ -1211,6 +1214,14 @@ int sock_getsockopt(struct socket *sock, int level, int optname,
 		v.val = sock_flag(sk, SOCK_SELECT_ERR_QUEUE);
 		break;
 
+	/* Backported from Linux 4.13: unique socket cookie for network tagging */
+	case SO_COOKIE:
+		lv = sizeof(u64);
+		if (len < lv)
+			return -EINVAL;
+		v.val64 = sock_gen_cookie(sk);
+		break;
+
 	default:
 		return -ENOPROTOOPT;
 	}
@@ -1386,6 +1397,10 @@ struct sock *sk_alloc(struct net *net, int family, gfp_t priority,
 
 		sock_update_classid(sk);
 		sock_update_netprioidx(sk);
+		
+#ifdef CONFIG_CGROUP_BPF
+		cgroup_sk_alloc(&sk->sk_cgrp_data);
+#endif
 	}
 
 	return sk;
@@ -1422,6 +1437,10 @@ static void __sk_free(struct sock *sk)
 	put_pid(sk->sk_peer_pid);
 	put_net(sock_net(sk));
 	sk_prot_free(sk->sk_prot_creator, sk);
+
+#ifdef CONFIG_CGROUP_BPF
+	cgroup_sk_free(&sk->sk_cgrp_data);
+#endif
 }
 
 void sk_free(struct sock *sk)
@@ -1478,6 +1497,11 @@ struct sock *sk_clone_lock(const struct sock *sk, const gfp_t priority)
 		struct sk_filter *filter;
 
 		sock_copy(newsk, sk);
+
+#ifdef CONFIG_CGROUP_BPF
+		/* Copy cgroup data from parent socket */
+		newsk->sk_cgrp_data.cgroup = sk->sk_cgrp_data.cgroup;
+#endif
 
 		newsk->sk_prot_creator = sk->sk_prot;
 

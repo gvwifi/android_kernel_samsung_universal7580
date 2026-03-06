@@ -465,13 +465,58 @@ static int jpeg_enc_vidioc_s_ctrl(struct file *file, void *priv,
 	struct jpeg_ctx *ctx = priv;
 
 	switch (ctrl->id) {
+	case V4L2_CID_JPEG_COMPRESSION_QUALITY:
+		/*
+		 * libhwjpeg sends quality factor via VIDIOC_S_CTRL when
+		 * VIDIOC_S_EXT_CTRLS is not supported (ENOTTY fallback).
+		 * Store the quality so jpeg_hx_set_enc_tbl() uses correct tables.
+		 */
+		if (ctrl->value < 1 || ctrl->value > 100) {
+			v4l2_err(&ctx->jpeg_dev->v4l2_dev,
+				"Invalid JPEG quality factor %d (must be 1-100)\n",
+				ctrl->value);
+			return -EINVAL;
+		}
+		ctx->param.enc_param.quality = ctrl->value;
+		break;
+	case V4L2_CID_JPEG_CHROMA_SUBSAMPLING:
+		/* Chroma subsampling is determined by the output V4L2 format;
+		 * accept but ignore this control to avoid "Invalid control" noise. */
+		break;
 	case V4L2_CID_CACHEABLE:
 		v4l2_err(&ctx->jpeg_dev->v4l2_dev,
 		"Invalid control : 'cacheable' set is not available\n");
 		break;
 	default:
-		v4l2_err(&ctx->jpeg_dev->v4l2_dev, "Invalid control\n");
+		/* Silently ignore unsupported Samsung-specific controls
+		 * (V4L2_CID_JPEG_SEC_COMP_QUALITY, V4L2_CID_JPEG_HWFC_ENABLE, etc.)
+		 * so libhwjpeg's one-by-one fallback does not abort encoding. */
 		break;
+	}
+
+	return 0;
+}
+
+/*
+ * Handle VIDIOC_S_EXT_CTRLS for scalar JPEG controls.
+ * libhwjpeg tries the batch ioctl first. Older hardware (jpeg_hx) cannot
+ * support blob ext-controls (e.g. QTABLES2), but it can handle scalar ones.
+ * Iterate the list, skip blob controls, and delegate to vidioc_s_ctrl.
+ */
+static int jpeg_enc_vidioc_s_ext_ctrls(struct file *file, void *priv,
+			struct v4l2_ext_controls *ctrls)
+{
+	unsigned int i;
+	struct v4l2_control ctrl;
+
+	for (i = 0; i < ctrls->count; i++) {
+		/* Skip blob/pointer controls (size != 0) — hardware doesn't support them */
+		if (ctrls->controls[i].size != 0)
+			continue;
+
+		ctrl.id    = ctrls->controls[i].id;
+		ctrl.value = ctrls->controls[i].value;
+		jpeg_enc_vidioc_s_ctrl(file, priv, &ctrl);
 	}
 
 	return 0;
@@ -500,6 +545,7 @@ static const struct v4l2_ioctl_ops jpeg_enc_ioctl_ops = {
 	.vidioc_g_jpegcomp		= vidioc_enc_g_jpegcomp,
 	.vidioc_s_jpegcomp		= vidioc_enc_s_jpegcomp,
 	.vidioc_s_ctrl			= jpeg_enc_vidioc_s_ctrl,
+	.vidioc_s_ext_ctrls		= jpeg_enc_vidioc_s_ext_ctrls,
 };
 const struct v4l2_ioctl_ops *get_jpeg_hx_enc_v4l2_ioctl_ops(void)
 {

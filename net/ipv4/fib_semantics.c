@@ -625,6 +625,7 @@ static int fib_check_nh(struct fib_config *cfg, struct fib_info *fi,
 		}
 		rcu_read_lock();
 		{
+			struct fib_table *tbl = NULL;
 			struct flowi4 fl4 = {
 				.daddr = nh->nh_gw,
 				.flowi4_scope = cfg->fc_scope + 1,
@@ -634,7 +635,26 @@ static int fib_check_nh(struct fib_config *cfg, struct fib_info *fi,
 			/* It is not necessary, but requires a bit of thinking */
 			if (fl4.flowi4_scope < RT_SCOPE_LINK)
 				fl4.flowi4_scope = RT_SCOPE_LINK;
-			err = fib_lookup(net, &fl4, &res);
+
+			/* First try looking up the nexthop in the same table
+			 * as the route being added. This allows gateway routes
+			 * to be added when the subnet route is only in that
+			 * table (not in the main table). Backported from 4.14.
+			 */
+			if (cfg->fc_table && cfg->fc_table != RT_TABLE_MAIN)
+				tbl = fib_get_table(net, cfg->fc_table);
+
+			if (tbl)
+				err = fib_table_lookup(tbl, &fl4, &res,
+						       FIB_LOOKUP_NOREF);
+
+			/* On error or if no table given, fall back to global
+			 * lookup. This is needed for cases where nexthops are
+			 * in the local or main table rather than the given table.
+			 */
+			if (!tbl || err)
+				err = fib_lookup(net, &fl4, &res);
+
 			if (err) {
 				rcu_read_unlock();
 				return err;

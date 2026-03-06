@@ -124,6 +124,8 @@ obj-$(CONFIG_OCFS2_FS)		+= ocfs2/
 obj-$(CONFIG_BTRFS_FS)		+= btrfs/
 obj-$(CONFIG_GFS2_FS)           += gfs2/
 obj-$(CONFIG_F2FS_FS)		+= f2fs/
+obj-$(CONFIG_INCREMENTAL_FS)	+= incfs/
+obj-$(CONFIG_FS_VERITY)		+= verity/
 obj-y				+= exofs/ # Multiple modules
 obj-$(CONFIG_CEPH_FS)		+= ceph/
 obj-$(CONFIG_PSTORE)		+= pstore/
@@ -132,3 +134,4 @@ obj-$(CONFIG_EXFAT_FS)		+= exfat/
 obj-$(CONFIG_SDFAT_FS)		+= sdfat/
 
 obj-$(CONFIG_DYNAMIC_FSYNC)	+= dyn_sync_cntrl.o
+obj-$(CONFIG_USERFAULTFD) += userfaultfd.o

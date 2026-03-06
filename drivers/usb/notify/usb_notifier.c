@@ -336,7 +336,13 @@ static int exynos_set_host(bool enable)
 	return 0;
 }
 
+/* NCM ready state - only needed for legacy USB_G_ANDROID */
+#ifdef CONFIG_USB_G_ANDROID
 extern void set_ncm_ready(bool ready);
+#else
+static inline void set_ncm_ready(bool ready) { }
+#endif
+
 static int exynos_set_peripheral(bool enable)
 {
 	if (enable) {

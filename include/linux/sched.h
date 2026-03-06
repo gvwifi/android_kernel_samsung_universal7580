@@ -1534,6 +1534,10 @@ struct task_struct {
 #ifdef CONFIG_SDP
 	unsigned int sensitive;
 #endif
+
+#ifdef CONFIG_PSI
+	unsigned int psi_flags;
+#endif
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

@@ -31,6 +31,7 @@
 
 #include <asm/mach/map.h>
 #include <asm/cacheflush.h>
+#include <asm/barrier.h>
 #include <asm/ptrace.h>
 #include <asm/memory.h>
 #include <plat/cpu.h>
@@ -353,6 +354,7 @@ extern unsigned long exynos_cs_pc[NR_CPUS][ESS_ITERATION];
 extern void register_hook_logbuf(void (*)(const char));
 #else
 extern void register_hook_logbuf(void (*)(const char *, size_t));
+extern void (*mach_restart)(char str, const char *cmd);
 #endif
 extern void register_hook_logger(void (*)(const char *, const char *, size_t));
 #ifdef CONFIG_ANDROID_LOGGER
@@ -634,22 +636,18 @@ int exynos_ss_post_panic(void)
 {
 	exynos_ss_save_context(NULL);
 	flush_cache_all();
+	/* Final barrier to save all logs before reboot */
+	dsb(sy);
+	isb();
 #ifdef CONFIG_EXYNOS7420_MC
 	disable_mc_powerdn();
 #endif
-	if (!no_wdt_dev) {
-#ifdef CONFIG_EXYNOS_SNAPSHOT_WATCHDOG_RESET
-		if (ess_hardlockup || num_online_cpus() > 1)
-			goto loop;
-#endif
-	}
 #ifndef CONFIG_EXYNOS_SNAPSHOT_PANIC_REBOOT
 	return 0;
 #endif
-	arm_pm_restart(0, "sw reset");
-#ifdef CONFIG_EXYNOS_SNAPSHOT_WATCHDOG_RESET
-loop:
-#endif
+	/* Always reboot on panic, don't loop indefinitely */
+	arm_pm_restart(0, "panic");
+	/* Should not reach here, but just in case */
 	while(1)
 		cpu_relax();
 
@@ -899,6 +897,8 @@ static inline void exynos_ss_hook_logbuf(const char buf)
 		/*  save the address of last_buf to physical address */
 		last_buf = (unsigned int)item->curr_ptr;
 		__raw_writel((last_buf & (SZ_16M - 1)) | ess_base.paddr, S5P_VA_SS_LAST_LOGBUF);
+		/* Force complete memory ordering to hardware register */
+		dsb(sy);
 	}
 }
 #else
@@ -921,6 +921,8 @@ static inline void exynos_ss_hook_logbuf(const char *buf, size_t size)
 		/*  save the address of last_buf to physical address */
 		last_buf = (size_t)item->curr_ptr;
 		__raw_writel((last_buf & (SZ_16M - 1)) | ess_base.paddr, S5P_VA_SS_LAST_LOGBUF);
+		/* Force complete memory ordering to hardware register */
+		dsb(sy);
 	}
 }
 #endif
@@ -985,7 +987,7 @@ static inline struct task_struct *get_next_thread(struct task_struct *tsk)
 				thread_group);
 }
 
-static void exynos_ss_dump_task_info(void)
+static void __maybe_unused exynos_ss_dump_task_info(void)
 {
 	struct task_struct *frst_tsk;
 	struct task_struct *curr_tsk;
@@ -1042,25 +1044,52 @@ static int exynos_ss_reboot_handler(struct notifier_block *nb,
 static int exynos_ss_panic_handler(struct notifier_block *nb,
 				   unsigned long l, void *buf)
 {
-#ifdef CONFIG_EXYNOS_SNAPSHOT_PANIC_REBOOT
+	/* CRITICAL: Stop ALL logging immediately - no more updates to snapshot buffer */
 	local_irq_disable();
+	
+	/* Unregister the logbuf hook to stop any writes to /proc/last_kmsg */
+	register_hook_logbuf(NULL);
+	
+	/* Force current log pointer to hardware before stopping */
+	dsb(sy);
+	isb();
+	
+#ifdef CONFIG_EXYNOS_SNAPSHOT_PANIC_REBOOT
+	/* Silence console completely - no output at all */
+	console_loglevel = 0;
+	
 	exynos_ss_report_reason(ESS_SIGN_PANIC);
-	pr_emerg("exynos-snapshot: panic - reboot[%s]\n", __func__);
-	exynos_ss_dump_task_info();
-#ifdef CONFIG_EXYNOS_CORESIGHT_PC_INFO
-	memcpy(ess_log->core, exynos_cs_pc, sizeof(ess_log->core));
-#endif
+	
+	/* Save context and flush caches like sec_reboot does */
+	exynos_ss_save_context(NULL);
 	flush_cache_all();
+	
+	/* Final barrier to ensure all writes complete */
+	dsb(sy);
+	isb();
+	
 #ifdef CONFIG_SEC_DEBUG
 	sec_debug_panic_handler(buf, true);
 #endif
+	
+	/* Use mach_restart like sec_reboot - this is the REAL restart function */
+	if (mach_restart) {
+		mach_restart(0, "panic");
+	}
+	
+	/* If mach_restart fails or is NULL, infinite loop */
+	while (1) {
+		cpu_relax();
+		wfi();
+	}
 #else
+	/* Non-reboot panic path */
 	exynos_ss_report_reason(ESS_SIGN_PANIC);
 	pr_emerg("exynos-snapshot: panic - normal[%s]\n", __func__);
 	exynos_ss_dump_task_info();
 	flush_cache_all();
 #endif
-	return 0;
+	return NOTIFY_DONE;
 }
 
 static struct notifier_block nb_reboot_block = {
@@ -1303,11 +1332,16 @@ static int __init exynos_ss_fixmap(void)
 				ess_items[i].curr_ptr = (unsigned char *)
 						((last_buf & UL(SZ_16M - 1)) |
 						(size_t)vaddr);
+				printk("sec_debug: Valid last_buf pointer, curr_ptr=%p\n", ess_items[i].curr_ptr);
 			} else {
-				/*  invalid address, set to first line */
+				/*  invalid address after hard reset, but DON'T clear buffer! 
+				 *  Set curr_ptr to head so decoder will scan from start.
+				 *  The improved sec_debug_last_kmsg can handle this case.
+				 */
 				ess_items[i].curr_ptr = (unsigned char *)vaddr;
-				/*  initialize logbuf to 0 */
-				memset((size_t *)vaddr, 0, size);
+				printk("sec_debug: Invalid last_buf (align mismatch), will scan buffer from start\n");
+				printk("sec_debug: Preserving log buffer for analysis, NOT clearing\n");
+				/*  DO NOT memset buffer to 0 - we want to preserve logs for decoder! */
 			}
 		} else {
 			/*  initialized log to 0 */

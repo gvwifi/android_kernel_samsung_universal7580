@@ -644,6 +644,9 @@ struct inode {
 	struct fscrypt_info	*i_crypt_info;
 #endif
 
+#ifdef CONFIG_FS_VERITY
+	void			*i_verity_info;
+#endif
 	void			*i_private; /* fs or device private pointer */
 };
 
@@ -916,6 +919,7 @@ static inline int file_check_writeable(struct file *filp)
 #define FL_SLEEP	128	/* A blocking lock */
 #define FL_DOWNGRADE_PENDING	256 /* Lease is being downgraded */
 #define FL_UNLOCK_PENDING	512 /* Lease is being broken */
+#define FL_OFDLCK	1024	/* lock is "owned" by struct file */
 
 /*
  * Special return value from posix_lock_file() and vfs_lock_file() for
@@ -1000,12 +1004,12 @@ struct file_lock {
 extern void send_sigio(struct fown_struct *fown, int fd, int band);
 
 #ifdef CONFIG_FILE_LOCKING
-extern int fcntl_getlk(struct file *, struct flock __user *);
+extern int fcntl_getlk(struct file *, unsigned int, struct flock __user *);
 extern int fcntl_setlk(unsigned int, struct file *, unsigned int,
 			struct flock __user *);
 
 #if BITS_PER_LONG == 32
-extern int fcntl_getlk64(struct file *, struct flock64 __user *);
+extern int fcntl_getlk64(struct file *, unsigned int, struct flock64 __user *);
 extern int fcntl_setlk64(unsigned int, struct file *, unsigned int,
 			struct flock64 __user *);
 #endif
@@ -1041,7 +1045,8 @@ extern void locks_delete_block(struct file_lock *waiter);
 extern void lock_flocks(void);
 extern void unlock_flocks(void);
 #else /* !CONFIG_FILE_LOCKING */
-static inline int fcntl_getlk(struct file *file, struct flock __user *user)
+static inline int fcntl_getlk(struct file *file, unsigned int cmd,
+			      struct flock __user *user)
 {
 	return -EINVAL;
 }
@@ -1053,7 +1058,8 @@ static inline int fcntl_setlk(unsigned int fd, struct file *file,
 }
 
 #if BITS_PER_LONG == 32
-static inline int fcntl_getlk64(struct file *file, struct flock64 __user *user)
+static inline int fcntl_getlk64(struct file *file, unsigned int cmd,
+				struct flock64 __user *user)
 {
 	return -EINVAL;
 }
@@ -1264,6 +1270,7 @@ struct sb_writers {
 #endif
 };
 
+struct fsverity_operations;
 struct super_block {
 	struct list_head	s_list;		/* Keep this first */
 	dev_t			s_dev;		/* search index; _not_ kdev_t */
@@ -1287,6 +1294,12 @@ struct super_block {
 	const struct xattr_handler **s_xattr;
 
 	const struct fscrypt_operations	*s_cop;
+	const struct fsverity_operations *s_vop;
+
+#ifdef CONFIG_FS_ENCRYPTION
+	/* master crypto keys in use - for fscrypt v2 */
+	struct key		*s_master_keys;
+#endif
 
 	struct list_head	s_inodes;	/* all inodes */
 	struct hlist_bl_head	s_anon;		/* anonymous dentries for (nfs) exporting */
@@ -1702,6 +1715,10 @@ struct super_operations {
 #define S_IMA		1024	/* Inode has an associated IMA struct */
 #define S_AUTOMOUNT	2048	/* Automount/referral quasi-directory */
 #define S_NOSEC		4096	/* no suid or xattr security attributes */
+#define S_DAX		8192	/* Direct Access, avoiding the page cache */
+#define S_ENCRYPTED	16384	/* Encrypted file (using fs/crypto/) */
+#define S_CASEFOLD	32768	/* Casefolded file */
+#define S_VERITY	65536	/* Verity file (using fs/verity/) */
 
 /*
  * Note that nosuid etc flags are inode-specific: setting some file-system
@@ -1739,6 +1756,10 @@ struct super_operations {
 #define IS_IMA(inode)		((inode)->i_flags & S_IMA)
 #define IS_AUTOMOUNT(inode)	((inode)->i_flags & S_AUTOMOUNT)
 #define IS_NOSEC(inode)		((inode)->i_flags & S_NOSEC)
+#define IS_DAX(inode)		((inode)->i_flags & S_DAX)
+#define IS_ENCRYPTED(inode)	((inode)->i_flags & S_ENCRYPTED)
+#define IS_CASEFOLDED(inode)	((inode)->i_flags & S_CASEFOLD)
+#define IS_VERITY(inode)	((inode)->i_flags & S_VERITY)
 
 /*
  * Inode state bits.  Protected by inode->i_lock

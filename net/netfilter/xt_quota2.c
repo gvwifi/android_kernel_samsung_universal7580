@@ -13,6 +13,7 @@
  */
 #include <linux/list.h>
 #include <linux/module.h>
+#include <linux/uidgid.h>
 #include <linux/proc_fs.h>
 #include <linux/skbuff.h>
 #include <linux/spinlock.h>
@@ -231,7 +232,7 @@ q2_get_counter(const struct xt_quota_mtinfo2 *q)
 		spin_unlock_bh(&counter_list_lock);
 		goto out;
 	}
-	proc_set_user(p, quota_list_uid, quota_list_gid);
+	proc_set_user(p, make_kuid(&init_user_ns, quota_list_uid), make_kgid(&init_user_ns, quota_list_gid));
 	return e;
 
  out:

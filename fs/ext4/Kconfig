@@ -64,6 +64,34 @@ config EXT4_FS_SECURITY
 	  If you are not using a security module that requires using
 	  extended attributes for file security labels, say N.
 
+config EXT4_FS_ENCRYPTION
+	bool "Ext4 Encryption"
+	depends on EXT4_FS
+	select CRYPTO_AES
+	select CRYPTO_CBC
+	select CRYPTO_ECB
+	select CRYPTO_XTS
+	select CRYPTO_CTS
+	select CRYPTO_SHA256
+	select KEYS
+	help
+	  Enable encryption of ext4 files and directories.  This
+	  feature is similar to ecryptfs, but it is more memory
+	  efficient since it does not retain a cache of the
+	  unencrypted file to support mmap (the page cache contains
+	  the encrypted data).  The cost is that if the page cache
+	  is modifying the file, the page cache will not contain the
+	  plain text (it will be encrypted on the fly).
+
+config EXT4_FS_VERITY
+	bool "Ext4 Verity"
+	depends on EXT4_FS
+	select FS_VERITY
+	help
+	  Enable fs-verity support for ext4 filesystems.
+	  fs-verity allows the filesystem to ensure that a file matches
+	  its expected hash, and prevents the file from being modified.
+
 config EXT4_DEBUG
 	bool "EXT4 debugging support"
 	depends on EXT4_FS

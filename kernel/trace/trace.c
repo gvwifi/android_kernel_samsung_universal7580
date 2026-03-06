@@ -6278,6 +6278,24 @@ init_tracer_debugfs(struct trace_array *tr, struct dentry *d_tracer)
 
 }
 
+static ssize_t synthetic_events_read(struct file *file, char __user *buf,
+				     size_t count, loff_t *ppos)
+{
+	return 0; // EOF
+}
+
+static ssize_t synthetic_events_write(struct file *file, const char __user *buffer,
+				      size_t count, loff_t *ppos)
+{
+	return count;
+}
+
+static const struct file_operations synthetic_events_fops = {
+	.read		= synthetic_events_read,
+	.write		= synthetic_events_write,
+	.llseek		= no_llseek,
+};
+
 static __init int tracer_init_debugfs(void)
 {
 	struct dentry *d_tracer;
@@ -6314,11 +6332,15 @@ static __init int tracer_init_debugfs(void)
 			NULL, &tracing_saved_cmdlines_fops);
 
 #ifdef CONFIG_DYNAMIC_FTRACE
-	trace_create_file("dyn_ftrace_total_info", 0444, d_tracer,
-			&ftrace_update_tot_cnt, &tracing_dyn_info_fops);
+	trace_create_file("synthetic_events", 0644, d_tracer,
+			NULL, &synthetic_events_fops);
 #endif
 
 	create_trace_instances(d_tracer);
+
+	/* Parasetam0l: synthetic_events stub */
+	trace_create_file("synthetic_events", 0644, d_tracer,
+			NULL, &synthetic_events_fops);
 
 	create_trace_options_dir(&global_trace);
 

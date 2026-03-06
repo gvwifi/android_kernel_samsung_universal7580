@@ -117,8 +117,8 @@ struct net {
 #endif
 	struct netns_ipvs	*ipvs;
 	struct sock		*diag_nlsk;
-	atomic_t		rt_genid;
-};
+	atomic_t		rt_genid;	/* Backported from Linux 4.13: cookie generator for SO_COOKIE */
+	atomic64_t		cookie_gen;};
 
 /*
  * ifindex generation is per-net namespace, and loopback is

@@ -23,6 +23,7 @@
 #include <linux/aio.h>
 #include <linux/blkdev.h>
 #include <asm/pgtable.h>
+#include <linux/psi.h>
 
 static struct bio *get_swap_bio(gfp_t gfp_flags,
 				struct page *page, bio_end_io_t end_io)
@@ -322,9 +323,12 @@ int swap_readpage(struct page *page)
 	struct bio *bio;
 	int ret = 0;
 	struct swap_info_struct *sis = page_swap_info(page);
+	unsigned long pflags;
 
 	VM_BUG_ON(!PageLocked(page));
 	VM_BUG_ON(PageUptodate(page));
+
+	psi_memstall_enter(&pflags);
 	if (frontswap_load(page) == 0) {
 		SetPageUptodate(page);
 		unlock_page(page);
@@ -350,6 +354,7 @@ int swap_readpage(struct page *page)
 	count_vm_event(PSWPIN);
 	submit_bio(READ, bio);
 out:
+	psi_memstall_leave(&pflags);
 	return ret;
 }
 

@@ -187,6 +187,9 @@ long compat_ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case ION_IOC_MAP:
 	case ION_IOC_IMPORT:
 	case ION_IOC_SYNC:
+	case ION_IOC_HEAP_QUERY:
+	case ION_IOC_ABI_VERSION:
+	case ION_IOC_NEW_ALLOC:
 		return filp->f_op->unlocked_ioctl(filp, cmd,
 						(unsigned long)compat_ptr(arg));
 	default:

@@ -101,10 +101,18 @@ static int jpeg_hx_enc_queue_setup(struct vb2_queue *vq,
 
 	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		*num_planes = ctx->param.enc_param.out_plane;
-		for (i = 0; i < ctx->param.enc_param.in_plane; i++) {
-			sizes[i] = (ctx->param.enc_param.out_width *
-				ctx->param.enc_param.out_height *
-				ctx->param.enc_param.out_depth * 2) >> 3;
+		/*
+		 * Do not impose a minimum plane size for the JPEG output
+		 * (CAPTURE) queue.  The HAL passes a sub-buffer that starts
+		 * after the APPx/EXIF header area it already wrote, so its
+		 * length is legitimately smaller than the full allocation.
+		 * Leaving sizes[] at 0 means vb2 accepts any non-zero length
+		 * from userspace (USERPTR/DMABUF paths).
+		 *
+		 * Also fix loop bound: iterate up to out_plane, not in_plane.
+		 */
+		for (i = 0; i < ctx->param.enc_param.out_plane; i++) {
+			sizes[i] = 0;
 			allocators[i] = ctx->jpeg_dev->alloc_ctx;
 		}
 	}
@@ -471,10 +479,14 @@ static int jpeg_hx_m2m_open(struct file *file)
 		ctx->m2m_ctx =
 			v4l2_m2m_ctx_init(jpeg->m2m_dev_dec, ctx,
 				hx_queue_init_dec);
-	else
+	else {
+		/* Default quality factor for encoder; libhwjpeg will override via
+		 * VIDIOC_S_CTRL(V4L2_CID_JPEG_COMPRESSION_QUALITY) before encoding. */
+		ctx->param.enc_param.quality = 96;
 		ctx->m2m_ctx =
 			v4l2_m2m_ctx_init(jpeg->m2m_dev_enc, ctx,
 				hx_queue_init_enc);
+	}
 
 	if (IS_ERR(ctx->m2m_ctx)) {
 		int err = PTR_ERR(ctx->m2m_ctx);

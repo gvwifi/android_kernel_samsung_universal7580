@@ -9,9 +9,35 @@
 
 
 enum {
-	FUNCTIONFS_DESCRIPTORS_MAGIC = 1,
-	FUNCTIONFS_STRINGS_MAGIC     = 2
+	FUNCTIONFS_HAS_FS_DESC = 1,
+	FUNCTIONFS_HAS_HS_DESC = 2,
+	FUNCTIONFS_HAS_SS_DESC = 4,
+	FUNCTIONFS_HAS_MS_OS_DESC = 8,
+	FUNCTIONFS_VIRTUAL_ADDR = 16,
+	FUNCTIONFS_EVENTFD = 32,
+	FUNCTIONFS_ALL_CTRL_RECIP = 64,
+	FUNCTIONFS_CONFIG0_SETUP = 128,
 };
+
+/* These are kept for compatibility with 3.10 era userspace */
+#define FUNCTIONFS_DESCRIPTORS_MAGIC 1
+#define FUNCTIONFS_STRINGS_MAGIC     2
+#define FUNCTIONFS_DESCRIPTORS_MAGIC_V2 3
+
+struct usb_ext_compat_desc {
+	__u8 bFirstInterfaceNumber;
+	__u8 Reserved1;
+	__u8 CompatibleID[8];
+	__u8 SubCompatibleID[8];
+	__u8 Reserved2[6];
+} __attribute__((packed));
+
+struct usb_ext_prop_desc {
+	__le32 dwSize;
+	__le32 dwPropertyDataType;
+	__le16 wPropertyNameLength;
+	__u8 PropertyName[0];
+} __attribute__((packed));
 
 #define FUNCTIONFS_SS_DESC_MAGIC 0x0055DE5C
 
@@ -168,6 +194,9 @@ struct usb_functionfs_event {
  * active returns -ENODEV.
  */
 #define	FUNCTIONFS_ENDPOINT_REVMAP	_IO('g', 129)
+
+#define	FUNCTIONFS_ENDPOINT_DESC		_IOR('g', 130, \
+					     struct usb_endpoint_descriptor_no_audio)
 
 
 

@@ -339,9 +339,13 @@ maybe_resched:
 		 * fulfilled and that people aren't now looking at dead or
 		 * dying keys that they don't have a reference upon or a link
 		 * to.
+		 * 
+		 * Use expedited RCU synchronization to avoid long delays
+		 * on kernel 3.10 where standard synchronize_rcu() can stall
+		 * indefinitely waiting for grace periods.
 		 */
-		kdebug("gc sync");
-		synchronize_rcu();
+		kdebug("gc sync (expedited)");
+		synchronize_rcu_expedited();
 	}
 
 	if (!list_empty(&graveyard)) {

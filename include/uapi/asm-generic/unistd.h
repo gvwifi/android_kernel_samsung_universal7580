@@ -692,19 +692,112 @@ __SC_COMP(__NR_process_vm_writev, sys_process_vm_writev, \
 __SYSCALL(__NR_kcmp, sys_kcmp)
 #define __NR_finit_module 273
 __SYSCALL(__NR_finit_module, sys_finit_module)
-/* Backporting seccomp, skip a few ...
- * #define __NR_sched_setattr 274
-__SYSCALL(__NR_sched_setattr, sys_sched_setattr)
- * #define __NR_sched_getattr 275
-__SYSCALL(__NR_sched_getattr, sys_sched_getattr)
- * #define __NR_renameat2 276
+
+/* Backported syscalls for Android 16 */
+#define __NR_sched_setattr 274
+__SYSCALL(__NR_sched_setattr, sys_ni_syscall)
+#define __NR_sched_getattr 275
+__SYSCALL(__NR_sched_getattr, sys_ni_syscall)
+#define __NR_renameat2 276
 __SYSCALL(__NR_renameat2, sys_renameat2)
- */
+
 #define __NR_seccomp 277
 __SYSCALL(__NR_seccomp, sys_seccomp)
 
+#define __NR_getrandom 278
+__SYSCALL(__NR_getrandom, sys_getrandom)
+
+#define __NR_memfd_create 279
+__SYSCALL(__NR_memfd_create, sys_memfd_create)
+#define __NR_bpf 280
+__SYSCALL(__NR_bpf, sys_bpf)
+#define __NR_execveat 281
+__SYSCALL(__NR_execveat, sys_ni_syscall)
+#define __NR_userfaultfd 282
+__SYSCALL(__NR_userfaultfd, sys_userfaultfd)
+#define __NR_membarrier 283
+__SYSCALL(__NR_membarrier, sys_ni_syscall)
+#define __NR_mlock2 284
+__SYSCALL(__NR_mlock2, sys_ni_syscall)
+#define __NR_copy_file_range 285
+__SYSCALL(__NR_copy_file_range, sys_ni_syscall)
+#define __NR_preadv2 286
+__SYSCALL(__NR_preadv2, sys_ni_syscall)
+#define __NR_pwritev2 287
+__SYSCALL(__NR_pwritev2, sys_ni_syscall)
+#define __NR_pkey_mprotect 288
+__SYSCALL(__NR_pkey_mprotect, sys_ni_syscall)
+#define __NR_pkey_alloc 289
+__SYSCALL(__NR_pkey_alloc, sys_ni_syscall)
+#define __NR_pkey_free 290
+__SYSCALL(__NR_pkey_free, sys_ni_syscall)
+#define __NR_statx 291
+__SYSCALL(__NR_statx, sys_statx)
+#define __NR_io_pgetevents 292
+__SYSCALL(__NR_io_pgetevents, sys_ni_syscall)
+#define __NR_rseq 293
+__SYSCALL(__NR_rseq, sys_ni_syscall)
+#define __NR_kexec_file_load 294
+__SYSCALL(__NR_kexec_file_load, sys_ni_syscall)
+
+/* syscalls 295-423 - many are not needed, using stubs */
+#define __NR_pidfd_send_signal 424
+__SYSCALL(__NR_pidfd_send_signal, sys_ni_syscall)
+#define __NR_io_uring_setup 425
+__SYSCALL(__NR_io_uring_setup, sys_ni_syscall)
+#define __NR_io_uring_enter 426
+__SYSCALL(__NR_io_uring_enter, sys_ni_syscall)
+#define __NR_io_uring_register 427
+__SYSCALL(__NR_io_uring_register, sys_ni_syscall)
+#define __NR_open_tree 428
+__SYSCALL(__NR_open_tree, sys_ni_syscall)
+#define __NR_move_mount 429
+__SYSCALL(__NR_move_mount, sys_ni_syscall)
+#define __NR_fsopen 430
+__SYSCALL(__NR_fsopen, sys_ni_syscall)
+#define __NR_fsconfig 431
+__SYSCALL(__NR_fsconfig, sys_ni_syscall)
+#define __NR_fsmount 432
+__SYSCALL(__NR_fsmount, sys_ni_syscall)
+#define __NR_fspick 433
+__SYSCALL(__NR_fspick, sys_ni_syscall)
+#define __NR_pidfd_open 434
+__SYSCALL(__NR_pidfd_open, sys_ni_syscall)
+#define __NR_clone3 435
+__SYSCALL(__NR_clone3, sys_ni_syscall)
+#define __NR_close_range 436
+__SYSCALL(__NR_close_range, sys_ni_syscall)
+#define __NR_openat2 437
+__SYSCALL(__NR_openat2, sys_ni_syscall)
+#define __NR_pidfd_getfd 438
+__SYSCALL(__NR_pidfd_getfd, sys_ni_syscall)
+#define __NR_faccessat2 439
+__SYSCALL(__NR_faccessat2, sys_ni_syscall)
+#define __NR_process_madvise 440
+__SYSCALL(__NR_process_madvise, sys_ni_syscall)
+#define __NR_epoll_pwait2 441
+__SYSCALL(__NR_epoll_pwait2, sys_ni_syscall)
+#define __NR_mount_setattr 442
+__SYSCALL(__NR_mount_setattr, sys_ni_syscall)
+#define __NR_quotactl_fd 443
+__SYSCALL(__NR_quotactl_fd, sys_ni_syscall)
+#define __NR_landlock_create_ruleset 444
+__SYSCALL(__NR_landlock_create_ruleset, sys_ni_syscall)
+#define __NR_landlock_add_rule 445
+__SYSCALL(__NR_landlock_add_rule, sys_ni_syscall)
+#define __NR_landlock_restrict_self 446
+__SYSCALL(__NR_landlock_restrict_self, sys_ni_syscall)
+#define __NR_memfd_secret 447
+__SYSCALL(__NR_memfd_secret, sys_ni_syscall)
+#define __NR_process_mrelease 448
+__SYSCALL(__NR_process_mrelease, sys_ni_syscall)
+#define __NR_futex_waitv 449
+__SYSCALL(__NR_futex_waitv, sys_ni_syscall)
+#define __NR_set_mempolicy_home_node 450
+__SYSCALL(__NR_set_mempolicy_home_node, sys_ni_syscall)
+
 #undef __NR_syscalls
-#define __NR_syscalls 278
+#define __NR_syscalls 451
 
 /*
  * All syscalls below here should go away really,

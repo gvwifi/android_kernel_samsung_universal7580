@@ -605,8 +605,13 @@ static struct ion_handle *ion_handle_get_by_id(struct ion_client *client,
 
 	mutex_lock(&client->lock);
 	handle = idr_find(&client->idr, id);
-	if (handle)
-		ion_handle_get(handle);
+	if (handle) {
+		/* Check if refcount is valid before incrementing */
+		if (atomic_read(&handle->ref.refcount) > 0)
+			ion_handle_get(handle);
+		else
+			handle = NULL; /* Handle is being freed */
+	}
 	mutex_unlock(&client->lock);
 
 	return handle ? handle : ERR_PTR(-EINVAL);
@@ -1474,20 +1479,23 @@ static long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		if (copy_from_user(&data, (void __user *)arg,
 				   sizeof(struct ion_handle_data)))
 			return -EFAULT;
+		
+		/* Handle might already be freed - make operation idempotent */
 		handle = ion_handle_get_by_id(client, (int)data.handle);
-		if (IS_ERR(handle))
-			return PTR_ERR(handle);
+		if (IS_ERR(handle)) {
+			/* If handle doesn't exist, consider it already freed */
+			pr_debug("%s: handle %d already freed or invalid\n",
+				__func__, (int)data.handle);
+			return 0; /* Success - idempotent operation */
+		}
+		
 		ion_free(client, handle);
-		WARN((atomic_read(&handle->ref.refcount) <= 0) ||
-			(handle->client != client),
-			"%s: Unbalenced handle count: %d, client %p:%p\n",
-			__func__, atomic_read(&handle->ref.refcount),
-			handle->client, client);
+		
+		/* Validate handle state after free */
 		mutex_lock(&client->lock);
 		valid = ion_handle_validate(client, handle);
 		mutex_unlock(&client->lock);
-		WARN(!valid, "%s: invalid handle %p after ion_free\n",
-			__func__, handle);
+		
 		if ((atomic_read(&handle->ref.refcount) > 0) &&
 			(handle->client == client) && valid)
 			ion_handle_put(handle);

@@ -25,6 +25,7 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
+#include <linux/fscrypt.h>
 
 #include "ext4_jbd2.h"
 #include "xattr.h"
@@ -246,6 +247,13 @@ static void ext4_end_bio(struct bio *bio, int error)
 		if (!page)
 			continue;
 
+		/*
+		 * If this bvec page is an fscrypt bounce page (no mapping,
+		 * PagePrivate set with fscrypt_ctx), restore the original
+		 * plaintext page so buffer head management works correctly.
+		 */
+		fscrypt_pullback_bio_page(&page, true);
+
 		if (error) {
 			SetPageError(page);
 			set_bit(AS_EIO, &page->mapping->flags);
@@ -339,7 +347,8 @@ static int io_submit_init(struct ext4_io_submit *io,
 static int io_submit_add_bh(struct ext4_io_submit *io,
 			    struct inode *inode,
 			    struct writeback_control *wbc,
-			    struct buffer_head *bh)
+			    struct buffer_head *bh,
+			    struct page *data_page)
 {
 	ext4_io_end_t *io_end;
 	int ret;
@@ -358,7 +367,8 @@ submit_and_retry:
 		ext4_set_io_unwritten_flag(inode, io_end);
 	io->io_end->size += bh->b_size;
 	io->io_next_block++;
-	ret = bio_add_page(io->io_bio, bh->b_page, bh->b_size, bh_offset(bh));
+	ret = bio_add_page(io->io_bio, data_page ? data_page : bh->b_page,
+			   bh->b_size, bh_offset(bh));
 	if (ret != bh->b_size)
 		goto submit_and_retry;
 	return 0;
@@ -374,6 +384,7 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 	struct buffer_head *bh, *head;
 	int ret = 0;
 	int nr_submitted = 0;
+	struct page *data_page = NULL;
 
 	blocksize = 1 << inode->i_blkbits;
 
@@ -425,12 +436,38 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 		set_buffer_async_write(bh);
 	} while ((bh = bh->b_this_page) != head);
 
+	/*
+	 * For encrypted regular files, encrypt the page content into a bounce
+	 * page so that ciphertext is written to disk while the page cache
+	 * retains plaintext.  We only do this when blocksize == PAGE_CACHE_SIZE
+	 * (standard Android ext4) so that each page maps to exactly one block
+	 * and the bounce page covers the full page at offset 0.
+	 */
+	if (ext4_encrypted_inode(inode) && S_ISREG(inode->i_mode) &&
+	    blocksize == PAGE_CACHE_SIZE) {
+		data_page = fscrypt_encrypt_page(inode, page, PAGE_CACHE_SIZE,
+						 0, page->index, GFP_NOFS);
+		if (IS_ERR(data_page)) {
+			ret = PTR_ERR(data_page);
+			data_page = NULL;
+			/* Cancel all async-write buffers and bail */
+			bh = head;
+			do {
+				clear_buffer_async_write(bh);
+			} while ((bh = bh->b_this_page) != head);
+			redirty_page_for_writepage(wbc, page);
+			unlock_page(page);
+			end_page_writeback(page);
+			return ret;
+		}
+	}
+
 	/* Now submit buffers to write */
 	bh = head = page_buffers(page);
 	do {
 		if (!buffer_async_write(bh))
 			continue;
-		ret = io_submit_add_bh(io, inode, wbc, bh);
+		ret = io_submit_add_bh(io, inode, wbc, bh, data_page);
 		if (ret) {
 			/*
 			 * We only get here on ENOMEM.  Not much else
@@ -453,7 +490,10 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 	}
 	unlock_page(page);
 	/* Nothing submitted - we have to end page writeback */
-	if (!nr_submitted)
+	if (!nr_submitted) {
 		end_page_writeback(page);
+		if (data_page)
+			fscrypt_restore_control_page(data_page);
+	}
 	return ret;
 }

@@ -64,6 +64,7 @@ struct old_linux_dirent;
 struct perf_event_attr;
 struct file_handle;
 struct sigaltstack;
+union bpf_attr;
 
 #include <linux/types.h>
 #include <linux/aio_abi.h>
@@ -735,6 +736,9 @@ asmlinkage long sys_linkat(int olddfd, const char __user *oldname,
 			   int newdfd, const char __user *newname, int flags);
 asmlinkage long sys_renameat(int olddfd, const char __user * oldname,
 			     int newdfd, const char __user * newname);
+asmlinkage long sys_renameat2(int olddfd, const char __user *oldname,
+			      int newdfd, const char __user *newname,
+			      unsigned int flags);
 asmlinkage long sys_futimesat(int dfd, const char __user *filename,
 			      struct timeval __user *utimes);
 asmlinkage long sys_faccessat(int dfd, const char __user *filename, int mode);
@@ -746,6 +750,8 @@ asmlinkage long sys_openat(int dfd, const char __user *filename, int flags,
 			   umode_t mode);
 asmlinkage long sys_newfstatat(int dfd, const char __user *filename,
 			       struct stat __user *statbuf, int flag);
+asmlinkage long sys_statx(int dfd, const char __user *filename, unsigned flags,
+			  unsigned int mask, struct statx __user *buffer);
 asmlinkage long sys_fstatat64(int dfd, const char __user *filename,
 			       struct stat64 __user *statbuf, int flag);
 asmlinkage long sys_readlinkat(int dfd, const char __user *path, char __user *buf,
@@ -848,4 +854,9 @@ asmlinkage long sys_kcmp(pid_t pid1, pid_t pid2, int type,
 asmlinkage long sys_finit_module(int fd, const char __user *uargs, int flags);
 asmlinkage long sys_seccomp(unsigned int op, unsigned int flags,
 			    const char __user *uargs);
+
+asmlinkage long sys_memfd_create(const char __user *uname_user, unsigned int flags);
+asmlinkage long sys_userfaultfd(int flags);
+asmlinkage long sys_getrandom(char __user *buf, size_t count, unsigned int flags);
+asmlinkage long sys_bpf(int cmd, union bpf_attr __user *attr, unsigned int size);
 #endif

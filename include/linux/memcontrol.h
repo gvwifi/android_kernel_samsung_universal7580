@@ -452,7 +452,15 @@ static inline void sock_release_memcg(struct sock *sk)
 extern struct static_key memcg_kmem_enabled_key;
 
 extern int memcg_limited_groups_array_size;
+extern int memcg_nr_cache_ids;
 
+static inline void memcg_get_cache_ids(void)
+{
+}
+
+static inline void memcg_put_cache_ids(void)
+{
+}
 /*
  * Helper macro to loop through all memcg-specific caches. Callers must still
  * check if the cache is valid (it is either valid or NULL).
@@ -601,6 +609,16 @@ memcg_kmem_get_cache(struct kmem_cache *cachep, gfp_t gfp)
 #else
 #define for_each_memcg_cache_index(_idx)	\
 	for (; NULL; )
+
+#define memcg_nr_cache_ids 0
+
+static inline void memcg_get_cache_ids(void)
+{
+}
+
+static inline void memcg_put_cache_ids(void)
+{
+}
 
 static inline bool memcg_kmem_enabled(void)
 {

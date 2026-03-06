@@ -39,7 +39,13 @@
 #include <linux/log2.h>
 #include <linux/crc16.h>
 #include <linux/cleancache.h>
-#include <asm/uaccess.h>
+#include <linux/fscrypt.h>
+#include <linux/fsverity.h>
+
+extern struct fscrypt_operations ext4_cryptops;
+#ifdef CONFIG_EXT4_FS_VERITY
+extern const struct fsverity_operations ext4_verityops;
+#endif
 
 #include <linux/kthread.h>
 #include <linux/freezer.h>
@@ -390,12 +396,16 @@ static void ext4_journal_commit_callback(journal_t *journal, transaction_t *txn)
 
 static void ext4_handle_error(struct super_block *sb, char* buf)
 {
+	pr_debug("EXT4-fs DEBUG: ext4_handle_error called on %s (buf=%s, ERRORS_RO=%d, ERRORS_CONT=%d)\n",
+	         sb->s_id, buf ? buf : "(null)", test_opt(sb, ERRORS_RO), test_opt(sb, ERRORS_CONT));
+
 	if (sb->s_flags & MS_RDONLY)
 		return;
 
 	if (!test_opt(sb, ERRORS_CONT)) {
 		journal_t *journal = EXT4_SB(sb)->s_journal;
 
+		pr_debug("EXT4-fs DEBUG: Setting EXT4_MF_FS_ABORTED on %s\n", sb->s_id);
 		EXT4_SB(sb)->s_mount_flags |= EXT4_MF_FS_ABORTED;
 		if (journal)
 			jbd2_journal_abort(journal, -EIO);
@@ -827,6 +837,7 @@ static void ext4_put_super(struct super_block *sb)
 	ext4_mb_release(sb);
 	ext4_ext_release(sb);
 	ext4_xattr_put_super(sb);
+	fscrypt_sb_free(sb);
 
 	if (!(sb->s_flags & MS_RDONLY) && !aborted) {
 		EXT4_CLEAR_INCOMPAT_FEATURE(sb, EXT4_FEATURE_INCOMPAT_RECOVER);
@@ -2660,10 +2671,18 @@ EXT4_INFO_ATTR(lazy_itable_init);
 EXT4_INFO_ATTR(batched_discard);
 EXT4_INFO_ATTR(meta_bg_resize);
 
+static ssize_t verity_show(struct ext4_attr *a, struct ext4_sb_info *sbi,
+			   char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "supported\n");
+}
+EXT4_RO_ATTR(verity);
+
 static struct attribute *ext4_feat_attrs[] = {
 	ATTR_LIST(lazy_itable_init),
 	ATTR_LIST(batched_discard),
 	ATTR_LIST(meta_bg_resize),
+	ATTR_LIST(verity),
 	NULL,
 };
 
@@ -3944,6 +3963,12 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		sb->s_op = &ext4_sops;
 	else
 		sb->s_op = &ext4_nojournal_sops;
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
+	sb->s_cop = &ext4_cryptops;
+#endif
+#ifdef CONFIG_EXT4_FS_VERITY
+	sb->s_vop = &ext4_verityops;
+#endif
 	sb->s_export_op = &ext4_export_ops;
 	sb->s_xattr = ext4_xattr_handlers;
 #ifdef CONFIG_QUOTA
@@ -4200,6 +4225,26 @@ no_journal:
 
 	if (es->s_error_count)
 		mod_timer(&sbi->s_err_report, jiffies + 300*HZ); /* 5 minutes */
+
+	/*
+	 * Final safety check: ensure crypto and verity operations are set.
+	 * These should have been set earlier, but if not, set them now to
+	 * prevent NULL pointer crashes when accessing encrypted or verity files.
+	 */
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
+	if (!sb->s_cop) {
+		ext4_msg(sb, KERN_WARNING, 
+			 "s_cop was NULL, restoring ext4_cryptops");
+		sb->s_cop = &ext4_cryptops;
+	}
+#endif
+#ifdef CONFIG_EXT4_FS_VERITY
+	if (!sb->s_vop) {
+		ext4_msg(sb, KERN_WARNING,
+			 "s_vop was NULL, restoring ext4_verityops");
+		sb->s_vop = &ext4_verityops;
+	}
+#endif
 
 	kfree(orig_data);
 	return 0;
@@ -4511,7 +4556,12 @@ static int ext4_load_journal(struct super_block *sb,
 	}
 
 	EXT4_SB(sb)->s_journal = journal;
+	pr_debug("EXT4-fs DEBUG: After journal load on %s: j_flags=0x%lx, j_errno=%d, JBD2_ABORT=%d\n",
+	         sb->s_id, journal->j_flags, journal->j_errno, (journal->j_flags & JBD2_ABORT) ? 1 : 0);
 	ext4_clear_journal_err(sb, es);
+	pr_debug("EXT4-fs DEBUG: After ext4_clear_journal_err on %s: j_flags=0x%lx, j_errno=%d, JBD2_ABORT=%d, EXT4_MF_FS_ABORTED=%d\n",
+	         sb->s_id, journal->j_flags, journal->j_errno, (journal->j_flags & JBD2_ABORT) ? 1 : 0,
+	         (EXT4_SB(sb)->s_mount_flags & EXT4_MF_FS_ABORTED) ? 1 : 0);
 
 	if (!really_read_only && journal_devnum &&
 	    journal_devnum != le32_to_cpu(es->s_journal_dev)) {
@@ -4959,6 +5009,20 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 				goto restore_opts;
 		}
 	}
+#endif
+
+	/*
+	 * Ensure cryptops and verity operations are set.
+	 * These may be NULL if the superblock structure was partially
+	 * reinitialized or if there was a timing issue during mount.
+	 */
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
+	if (!sb->s_cop)
+		sb->s_cop = &ext4_cryptops;
+#endif
+#ifdef CONFIG_EXT4_FS_VERITY
+	if (!sb->s_vop)
+		sb->s_vop = &ext4_verityops;
 #endif
 
 	ext4_msg(sb, KERN_INFO, "re-mounted. Opts: %s", orig_data);
@@ -5641,7 +5705,15 @@ static int __init ext4_init_fs(void)
 	if (err)
 		goto out;
 
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
+	err = ext4_init_crypto();
+	if (err)
+		goto out_crypto;
+#endif
+
 	return 0;
+out_crypto:
+	unregister_filesystem(&ext4_fs_type);
 out:
 	unregister_as_ext2();
 	unregister_as_ext3();
@@ -5669,6 +5741,9 @@ out7:
 static void __exit ext4_exit_fs(void)
 {
 	ext4_destroy_lazyinit_thread();
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
+	ext4_exit_crypto();
+#endif
 	unregister_as_ext2();
 	unregister_as_ext3();
 	unregister_filesystem(&ext4_fs_type);

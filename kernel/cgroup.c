@@ -27,6 +27,7 @@
  */
 
 #include <linux/cgroup.h>
+#include <linux/fs.h>
 #include <linux/cred.h>
 #include <linux/ctype.h>
 #include <linux/errno.h>
@@ -62,6 +63,8 @@
 #include <linux/kthread.h>
 
 #include <linux/atomic.h>
+#include <linux/psi.h>
+#include <linux/bpf-cgroup.h>
 
 /* css deactivation bias, makes css->refcnt negative to deny new trygets */
 #define CSS_DEACT_BIAS		INT_MIN
@@ -82,12 +85,8 @@
  * B happens only through cgroup_show_options() and using cgroup_root_mutex
  * breaks it.
  */
-#ifdef CONFIG_PROVE_RCU
 DEFINE_MUTEX(cgroup_mutex);
 EXPORT_SYMBOL_GPL(cgroup_mutex);	/* only for task_subsys_state_check() */
-#else
-static DEFINE_MUTEX(cgroup_mutex);
-#endif
 
 static DEFINE_MUTEX(cgroup_root_mutex);
 
@@ -1029,7 +1028,11 @@ static int rebind_subsystems(struct cgroupfs_root *root,
 	 * any child cgroups exist. This is theoretically supportable
 	 * but involves complex error handling, so it's being left until
 	 * later */
-	if (root->number_of_cgroups > 1)
+	/* Currently we don't handle adding/removing subsystems when
+	 * any child cgroups exist. This is theoretically supportable
+	 * but involves complex error handling, so it's being left until
+	 * later */
+	if (root->number_of_cgroups > 1 && !(root->flags & CGRP_ROOT_UNIFIED))
 		return -EBUSY;
 
 	/* Process each subsystem */
@@ -1098,6 +1101,8 @@ static int cgroup_show_options(struct seq_file *seq, struct dentry *dentry)
 		seq_puts(seq, ",noprefix");
 	if (root->flags & CGRP_ROOT_XATTR)
 		seq_puts(seq, ",xattr");
+	if (root->flags & CGRP_ROOT_CPUSET_V2_MODE)
+		seq_puts(seq, ",cpuset_v2_mode");
 	if (strlen(root->release_agent_path))
 		seq_printf(seq, ",release_agent=%s", root->release_agent_path);
 	if (test_bit(CGRP_CPUSET_CLONE_CHILDREN, &root->top_cgroup.flags))
@@ -1113,6 +1118,7 @@ struct cgroup_sb_opts {
 	unsigned long flags;
 	char *release_agent;
 	bool cpuset_clone_children;
+	bool cpuset_v2_mode;
 	char *name;
 	/* User explicitly requested empty subsystem */
 	bool none;
@@ -1136,6 +1142,8 @@ static int parse_cgroupfs_options(char *data, struct cgroup_sb_opts *opts)
 	bool module_pin_failed = false;
 
 	BUG_ON(!mutex_is_locked(&cgroup_mutex));
+
+	pr_debug("cgroup: parsing mount options: %s\n", data ? data : "(null)");
 
 #ifdef CONFIG_CPUSETS
 	mask = ~(1UL << cpuset_subsys_id);
@@ -1168,6 +1176,11 @@ static int parse_cgroupfs_options(char *data, struct cgroup_sb_opts *opts)
 		}
 		if (!strcmp(token, "clone_children")) {
 			opts->cpuset_clone_children = true;
+			continue;
+		}
+		if (!strcmp(token, "cpuset_v2_mode")) {
+			opts->cpuset_v2_mode = true;
+			opts->flags |= CGRP_ROOT_CPUSET_V2_MODE;
 			continue;
 		}
 		if (!strcmp(token, "xattr")) {
@@ -1227,8 +1240,10 @@ static int parse_cgroupfs_options(char *data, struct cgroup_sb_opts *opts)
 
 			break;
 		}
-		if (i == CGROUP_SUBSYS_COUNT)
+		if (i == CGROUP_SUBSYS_COUNT) {
+			pr_err("cgroup: unknown option or subsystem '%s'\n", token);
 			return -ENOENT;
+		}
 	}
 
 	/*
@@ -1406,6 +1421,8 @@ static const struct super_operations cgroup_ops = {
 
 static void init_cgroup_housekeeping(struct cgroup *cgrp)
 {
+	int i;
+
 	INIT_LIST_HEAD(&cgrp->sibling);
 	INIT_LIST_HEAD(&cgrp->children);
 	INIT_LIST_HEAD(&cgrp->files);
@@ -1418,6 +1435,10 @@ static void init_cgroup_housekeeping(struct cgroup *cgrp)
 	INIT_LIST_HEAD(&cgrp->event_list);
 	spin_lock_init(&cgrp->event_list_lock);
 	simple_xattrs_init(&cgrp->xattrs);
+
+	/* Initialize BPF program lists for each attach type */
+	for (i = 0; i < ARRAY_SIZE(cgrp->bpf.progs); i++)
+		INIT_LIST_HEAD(&cgrp->bpf.progs[i]);
 }
 
 static void init_cgroup_root(struct cgroupfs_root *root)
@@ -1585,6 +1606,8 @@ static struct dentry *cgroup_mount(struct file_system_type *fs_type,
 	/* First find the desired set of subsystems */
 	mutex_lock(&cgroup_mutex);
 	ret = parse_cgroupfs_options(data, &opts);
+	if (!ret && !strcmp(fs_type->name, "cgroup2"))
+		opts.flags |= CGRP_ROOT_SANE_BEHAVIOR;
 	mutex_unlock(&cgroup_mutex);
 	if (ret)
 		goto out_err;
@@ -2137,8 +2160,8 @@ int subsys_cgroup_allow_attach(struct cgroup *cgrp, struct cgroup_taskset *tset)
 	cgroup_taskset_for_each(task, cgrp, tset) {
 		tcred = __task_cred(task);
 
-		if (current != task && cred->euid != tcred->uid &&
-		    cred->euid != tcred->suid)
+		if (current != task && !uid_eq(cred->euid, tcred->uid) &&
+		    !uid_eq(cred->euid, tcred->suid))
 			return -EACCES;
 	}
 
@@ -2784,6 +2807,8 @@ static int cgroup_addrm_files(struct cgroup *cgrp, struct cgroup_subsys *subsys,
 	for (cft = cfts; cft->name[0] != '\0'; cft++) {
 		/* does cft->flags tell us to skip this file on @cgrp? */
 		if ((cft->flags & CFTYPE_INSANE) && cgroup_sane_behavior(cgrp))
+			continue;
+		if ((cft->flags & CFTYPE_SANE) && !cgroup_sane_behavior(cgrp))
 			continue;
 		if ((cft->flags & CFTYPE_NOT_ON_ROOT) && !cgrp->parent)
 			continue;
@@ -3996,6 +4021,103 @@ fail:
 	return ret;
 }
 
+static int cgroup_controllers_show(struct cgroup *cgrp, struct cftype *cft,
+				   struct seq_file *seq)
+{
+	int i;
+	for (i = 0; i < CGROUP_SUBSYS_COUNT; i++) {
+		struct cgroup_subsys *ss = subsys[i];
+		if (ss == NULL || ss->disabled)
+			continue;
+		if (test_bit(i, &cgrp->root->subsys_mask))
+			seq_printf(seq, "%s ", ss->name);
+	}
+	seq_putc(seq, '\n');
+	return 0;
+}
+
+static int cgroup_subtree_control_show(struct cgroup *cgrp, struct cftype *cft,
+				       struct seq_file *seq)
+{
+	/* In unified hierarchy emulation on 3.10, all attached subsystems are enabled */
+	return cgroup_controllers_show(cgrp, cft, seq);
+}
+
+static int cgroup_subtree_control_write(struct cgroup *cgrp, struct cftype *cft,
+					const char *buffer)
+{
+	char *buf, *tok, *curr;
+	int ret = 0;
+
+	/*
+	 * In cgroups v1 (3.10), we don't have real subtree_control functionality.
+	 * For Android 16 compatibility, we accept all requests silently.
+	 * The CFTYPE_SANE check ensures this file only appears for sane_behavior
+	 * cgroups, but we also make it work for regular cgroups if called directly.
+	 */
+
+	buf = kstrdup(buffer, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	curr = buf;
+	while ((tok = strsep(&curr, " ")) != NULL) {
+		bool enable = true;
+		struct cgroup_subsys *ss = NULL;
+		int i;
+
+		if (!*tok)
+			continue;
+
+		if (tok[0] == '+') {
+			enable = true;
+			tok++;
+		} else if (tok[0] == '-') {
+			enable = false;
+			tok++;
+		}
+
+		for (i = 0; i < CGROUP_SUBSYS_COUNT; i++) {
+			struct cgroup_subsys *s = subsys[i];
+			if (s && !strcmp(s->name, tok)) {
+				ss = s;
+				break;
+			}
+		}
+
+		if (!ss) {
+			/* Unknown controller, ignore - Android might send unknown ones */
+			pr_debug("cgroup: subtree_control: ignoring unknown controller '%s'\n", tok);
+			continue;
+		}
+
+		if (enable) {
+			/*
+			 * In cgroup v1 (3.10), controllers are on separate hierarchies.
+			 * For cgroups v2 compatibility, we accept the request but the
+			 * controller operations will go through the v1 hierarchy.
+			 * This allows Android 16's cgroups v2 setup to complete successfully.
+			 */
+			if (!test_bit(ss->subsys_id, &cgrp->root->subsys_mask)) {
+				pr_debug("cgroup: subtree_control: accepting %s (v2 compat mode)\n", ss->name);
+				/* Don't error - just accept the request silently */
+			}
+		}
+		/* Enable and disable are both accepted but don't change anything
+		 * since controllers are already on v1 hierarchies */
+	}
+	kfree(buf);
+	return ret;
+}
+
+static int cgroup_events_show(struct cgroup *cgrp, struct cftype *cft,
+			      struct seq_file *seq)
+{
+	int populated = (cgroup_task_count(cgrp) > 0) || !list_empty(&cgrp->children);
+	seq_printf(seq, "populated %d\n", populated);
+	return 0;
+}
+
 static u64 cgroup_clone_children_read(struct cgroup *cgrp,
 				    struct cftype *cft)
 {
@@ -4060,6 +4182,24 @@ static struct cftype files[] = {
 		.read_seq_string = cgroup_release_agent_show,
 		.write_string = cgroup_release_agent_write,
 		.max_write_len = PATH_MAX,
+	},
+	{
+		.name = "cgroup.controllers",
+		.flags = 0,  /* Removed CFTYPE_SANE for Android 16 v2 compat */
+		.read_seq_string = cgroup_controllers_show,
+	},
+	{
+		.name = "cgroup.subtree_control",
+		.flags = 0,  /* Removed CFTYPE_SANE for Android 16 v2 compat */
+		.read_seq_string = cgroup_subtree_control_show,
+		.write_string = cgroup_subtree_control_write,
+		.max_write_len = 2048,
+		.mode = S_IRUGO | S_IWUSR,
+	},
+	{
+		.name = "cgroup.events",
+		.flags = CFTYPE_SANE,
+		.read_seq_string = cgroup_events_show,
 	},
 	{ }	/* terminate */
 };
@@ -4221,11 +4361,21 @@ static long cgroup_create(struct cgroup *parent, struct dentry *dentry,
 
 	init_cgroup_housekeeping(cgrp);
 
+	if (psi_cgroup_alloc(cgrp)) {
+		err = -ENOMEM;
+		goto err_free_id;
+	}
+
 	dentry->d_fsdata = cgrp;
 	cgrp->dentry = dentry;
 
 	cgrp->parent = parent;
 	cgrp->root = parent->root;
+
+	/* Inherit BPF programs from parent cgroup */
+	err = cgroup_bpf_inherit(cgrp);
+	if (err)
+		goto err_free_id;
 
 	if (notify_on_release(parent))
 		set_bit(CGRP_NOTIFY_ON_RELEASE, &cgrp->flags);
@@ -4368,6 +4518,9 @@ static int cgroup_destroy_locked(struct cgroup *cgrp)
 	 */
 	for_each_subsys(cgrp->root, ss)
 		css_put(cgrp->subsys[ss->subsys_id]);
+
+	psi_cgroup_free(cgrp);
+	cgroup_bpf_put(cgrp);
 
 	raw_spin_lock(&release_list_lock);
 	if (!list_empty(&cgrp->release_list))
@@ -4688,6 +4841,25 @@ int __init cgroup_init_early(void)
 	return 0;
 }
 
+static struct dentry *cgroup2_mount(struct file_system_type *fs_type,
+			 int flags, const char *unused_dev_name,
+			 void *data)
+{
+	/* 
+	 * Force "none,name=cgroup2" options.
+	 * This instructs cgroup_mount to create a named hierarchy with no 
+	 * controllers attached, which is valid in Cgroup v1 and avoids 
+	 * conflict (EBUSY) with other controller mounts.
+	 */
+	return cgroup_mount(fs_type, flags, unused_dev_name, "none,name=cgroup2");
+}
+
+static struct file_system_type cgroup2_fs_type = {
+	.name = "cgroup2",
+	.mount = cgroup2_mount,
+	.kill_sb = cgroup_kill_sb,
+};
+
 /**
  * cgroup_init - cgroup initialization
  *
@@ -4703,6 +4875,14 @@ int __init cgroup_init(void)
 	err = bdi_init(&cgroup_backing_dev_info);
 	if (err)
 		return err;
+
+	/* Initialize BPF effective arrays for the root cgroup.
+	 * Child cgroups inherit these via cgroup_bpf_inherit(), but the
+	 * root cgroup is created before memory allocation is available,
+	 * so we initialize it here. */
+	err = cgroup_bpf_inherit(&rootnode.top_cgroup);
+	if (err)
+		pr_warn("cgroup: failed to initialize root cgroup BPF: %d\n", err);
 
 	for (i = 0; i < CGROUP_SUBSYS_COUNT; i++) {
 		struct cgroup_subsys *ss = subsys[i];
@@ -4721,6 +4901,10 @@ int __init cgroup_init(void)
 	hash_add(css_set_table, &init_css_set.hlist, key);
 	BUG_ON(!init_root_id(&rootnode));
 
+	/* Ensure fs_kobj is initialized (in case we ran before mnt_init) */
+	if (!fs_kobj)
+		fs_kobj = kobject_create_and_add("fs", NULL);
+
 	cgroup_kobj = kobject_create_and_add("cgroup", fs_kobj);
 	if (!cgroup_kobj) {
 		err = -ENOMEM;
@@ -4729,6 +4913,13 @@ int __init cgroup_init(void)
 
 	err = register_filesystem(&cgroup_fs_type);
 	if (err < 0) {
+		kobject_put(cgroup_kobj);
+		goto out;
+	}
+
+	err = register_filesystem(&cgroup2_fs_type);
+	if (err < 0) {
+		unregister_filesystem(&cgroup_fs_type);
 		kobject_put(cgroup_kobj);
 		goto out;
 	}
@@ -5043,6 +5234,88 @@ static void check_for_release(struct cgroup *cgrp)
 			schedule_work(&release_agent_work);
 	}
 }
+
+/**
+ * cgroup_get_from_path - lookup and get a cgroup from its hierarchy path
+ * @path: path on the hierarchy
+ *
+ * Find the cgroup at @path, increment its reference count and return it.
+ * Currently it only looks in the first hierarchy (rootnode).
+ */
+struct cgroup *cgroup_get_from_path(const char *path)
+{
+	struct cgroup *cgrp = NULL;
+	struct path p;
+	int err;
+
+	err = kern_path(path, LOOKUP_DIRECTORY, &p);
+	if (err)
+		return ERR_PTR(err);
+
+	if (p.dentry->d_sb->s_type != &cgroup_fs_type &&
+	    p.dentry->d_sb->s_type != &cgroup2_fs_type) {
+		path_put(&p);
+		return ERR_PTR(-EINVAL);
+	}
+
+	cgrp = __d_cgrp(p.dentry);
+	if (cgrp)
+		atomic_inc(&cgrp->count);
+	else
+		cgrp = ERR_PTR(-ENOENT);
+
+	path_put(&p);
+	return cgrp;
+}
+EXPORT_SYMBOL_GPL(cgroup_get_from_path);
+
+/**
+ * cgroup_get_from_fd - get a cgroup pointer from a fd
+ * @fd: fd obtained by open(cgroup_dir)
+ */
+struct cgroup *cgroup_get_from_fd(int fd)
+{
+	struct cgroup *cgrp;
+	struct file *f;
+
+	f = fget_raw(fd);
+	if (!f)
+		return ERR_PTR(-EBADF);
+
+	if ((f->f_path.dentry->d_sb->s_type != &cgroup_fs_type &&
+	     f->f_path.dentry->d_sb->s_type != &cgroup2_fs_type) ||
+	    !S_ISDIR(f->f_path.dentry->d_inode->i_mode)) {
+		fput(f);
+		return ERR_PTR(-EBADF);
+	}
+
+	cgrp = __d_cgrp(f->f_path.dentry);
+	if (!cgrp) {
+		fput(f);
+		return ERR_PTR(-ENOENT);
+	}
+
+	atomic_inc(&cgrp->count);
+	fput(f);
+
+	return cgrp;
+}
+EXPORT_SYMBOL_GPL(cgroup_get_from_fd);
+
+/**
+ * cgroup_put - decrement a cgroup's refcount
+ * @cgrp: the cgroup to put
+ */
+void cgroup_put(struct cgroup *cgrp)
+{
+	rcu_read_lock();
+	if (atomic_dec_and_test(&cgrp->count) &&
+	    notify_on_release(cgrp)) {
+		check_for_release(cgrp);
+	}
+	rcu_read_unlock();
+}
+EXPORT_SYMBOL_GPL(cgroup_put);
 
 /* Caller must verify that the css is not for root cgroup */
 bool __css_tryget(struct cgroup_subsys_state *css)

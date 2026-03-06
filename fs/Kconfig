@@ -51,6 +51,14 @@ endif # BLOCK
 config FS_POSIX_ACL
 	def_bool n
 
+config USERFAULTFD
+	bool "Enable userfaultfd() system call"
+	select ANON_INODES
+	depends on MMU
+	help
+	  Enable the userfaultfd() system call that allows to intercept and
+	  handle page faults in userland.
+
 config EXPORTFS
 	tristate
 
@@ -272,6 +280,9 @@ endif # NETWORK_FILESYSTEMS
 
 source "fs/nls/Kconfig"
 source "fs/dlm/Kconfig"
+source "fs/incfs/Kconfig"
+source "fs/verity/Kconfig"
+
 
 config BH_LRU_SIZE
 	int "buffer head per-CPU LRU size"

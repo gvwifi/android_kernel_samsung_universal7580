@@ -31,6 +31,8 @@
 #include <linux/blockgroup_lock.h>
 #include <linux/percpu_counter.h>
 #include <crypto/hash.h>
+#include "ext4_crypto.h"
+#include <linux/fscrypt.h>
 #ifdef __KERNEL__
 #include <linux/compat.h>
 #endif
@@ -388,6 +390,7 @@ struct flex_groups {
 #define EXT4_COMPRBLK_FL		0x00000200 /* One or more compressed clusters */
 #define EXT4_NOCOMPR_FL			0x00000400 /* Don't compress */
 #define EXT4_ECOMPR_FL			0x00000800 /* Compression error */
+#define EXT4_ENCRYPT_FL			0x00000800 /* Encrypted file */
 /* End compression flags --- maybe not all used */
 #define EXT4_INDEX_FL			0x00001000 /* hash-indexed directory */
 #define EXT4_IMAGIC_FL			0x00002000 /* AFS directory */
@@ -397,6 +400,7 @@ struct flex_groups {
 #define EXT4_TOPDIR_FL			0x00020000 /* Top of directory hierarchies*/
 #define EXT4_HUGE_FILE_FL               0x00040000 /* Set to each huge file */
 #define EXT4_EXTENTS_FL			0x00080000 /* Inode uses extents */
+#define EXT4_VERITY_FL			0x00100000 /* Verity protected inode */
 #define EXT4_EA_INODE_FL	        0x00200000 /* Inode used for large EA */
 #define EXT4_EOFBLOCKS_FL		0x00400000 /* Blocks allocated beyond EOF */
 #define EXT4_INLINE_DATA_FL		0x10000000 /* Inode has inline data. */
@@ -445,6 +449,7 @@ enum {
 	EXT4_INODE_COMPRBLK	= 9,	/* One or more compressed clusters */
 	EXT4_INODE_NOCOMPR	= 10,	/* Don't compress */
 	EXT4_INODE_ECOMPR	= 11,	/* Compression error */
+	EXT4_INODE_ENCRYPT	= 11,	/* Encrypted file */
 /* End compression flags --- maybe not all used */
 	EXT4_INODE_INDEX	= 12,	/* hash-indexed directory */
 	EXT4_INODE_IMAGIC	= 13,	/* AFS directory */
@@ -454,6 +459,7 @@ enum {
 	EXT4_INODE_TOPDIR	= 17,	/* Top of directory hierarchies*/
 	EXT4_INODE_HUGE_FILE	= 18,	/* Set to each huge file */
 	EXT4_INODE_EXTENTS	= 19,	/* Inode uses extents */
+	EXT4_INODE_VERITY	= 20,	/* Verity protected inode */
 	EXT4_INODE_EA_INODE	= 21,	/* Inode used for large EA */
 	EXT4_INODE_EOFBLOCKS	= 22,	/* Blocks allocated beyond EOF */
 	EXT4_INODE_INLINE_DATA	= 28,	/* Data in inode. */
@@ -618,6 +624,9 @@ enum {
 #define EXT4_IOC_MOVE_EXT		_IOWR('f', 15, struct move_extent)
 #define EXT4_IOC_RESIZE_FS		_IOW('f', 16, __u64)
 #define EXT4_IOC_SWAP_BOOT		_IO('f', 17)
+#define EXT4_IOC_SET_ENCRYPTION_POLICY	_IOR('f', 19, struct ext4_encryption_policy)
+#define EXT4_IOC_GET_ENCRYPTION_USER_METADATA _IOW('f', 20, struct ext4_encryption_user_metadata)
+#define EXT4_IOC_GET_ENCRYPTION_POLICY	_IOW('f', 21, struct ext4_encryption_policy)
 
 #if defined(__KERNEL__) && defined(CONFIG_COMPAT)
 /*
@@ -995,6 +1004,22 @@ struct ext4_inode_info {
 
 	/* Precomputed uuid+inum+igen checksum for seeding inode checksums */
 	__u32 i_csum_seed;
+
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
+	/* Encryption params */
+	struct ext4_crypt_info *i_crypt_info;
+#endif
+
+#ifdef CONFIG_FS_VERITY
+	/*
+	 * Cached original data size saved at the start of
+	 * FS_IOC_ENABLE_VERITY.  On kernel 3.10, ext4_write_end() extends
+	 * i_size when the Merkle tree is written past EOF, which corrupts
+	 * the metadata_pos calculation.  By caching the position once, all
+	 * Merkle tree read/write operations use a stable base offset.
+	 */
+	loff_t i_verity_data_size;
+#endif
 };
 
 /*
@@ -1222,7 +1247,14 @@ struct ext4_super_block {
  * run-time mount flags
  */
 #define EXT4_MF_MNTDIR_SAMPLED	0x0001
-#define EXT4_MF_FS_ABORTED	0x0002	/* Fatal error detected */
+#define EXT4_MF_TEST_DUMMY_ENCRYPTION	0x0002
+#define EXT4_MF_FS_ABORTED		0x0004	/* Fatal error detected */
+
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
+#define DUMMY_ENCRYPTION_ENABLED(sbi) (unlikely((sbi)->s_mount_flags & EXT4_MF_TEST_DUMMY_ENCRYPTION))
+#else
+#define DUMMY_ENCRYPTION_ENABLED(sbi) 0
+#endif
 
 /*
  * fourth extended-fs super-block data in memory
@@ -1384,6 +1416,9 @@ struct ext4_sb_info {
 	struct list_head s_es_lru;
 	struct percpu_counter s_extent_cache_cnt;
 	spinlock_t s_es_lru_lock ____cacheline_aligned_in_smp;
+
+	/* fscrypt key information */
+	struct key *s_master_keys;
 };
 
 static inline struct ext4_sb_info *EXT4_SB(struct super_block *sb)
@@ -1449,6 +1484,7 @@ enum {
 					   nolocking */
 	EXT4_STATE_MAY_INLINE_DATA,	/* may have in-inode data */
 	EXT4_STATE_ORDERED_MODE,	/* data=ordered mode */
+	EXT4_STATE_VERITY_IN_PROGRESS,	/* building fs-verity Merkle tree */
 };
 
 #define EXT4_INODE_BIT_FNS(name, field, offset)				\
@@ -1556,6 +1592,7 @@ static inline void ext4_clear_state_flags(struct ext4_inode_info *ei)
  * GDT_CSUM bits are mutually exclusive.
  */
 #define EXT4_FEATURE_RO_COMPAT_METADATA_CSUM	0x0400
+#define EXT4_FEATURE_RO_COMPAT_VERITY		0x8000
 
 #define EXT4_FEATURE_INCOMPAT_COMPRESSION	0x0001
 #define EXT4_FEATURE_INCOMPAT_FILETYPE		0x0002
@@ -1571,6 +1608,7 @@ static inline void ext4_clear_state_flags(struct ext4_inode_info *ei)
 #define EXT4_FEATURE_INCOMPAT_BG_USE_META_CSUM	0x2000 /* use crc32c for bg */
 #define EXT4_FEATURE_INCOMPAT_LARGEDIR		0x4000 /* >2GB or 3-lvl htree */
 #define EXT4_FEATURE_INCOMPAT_INLINE_DATA	0x8000 /* data in inode */
+#define EXT4_FEATURE_INCOMPAT_ENCRYPT		0x10000
 
 #define EXT2_FEATURE_COMPAT_SUPP	EXT4_FEATURE_COMPAT_EXT_ATTR
 #define EXT2_FEATURE_INCOMPAT_SUPP	(EXT4_FEATURE_INCOMPAT_FILETYPE| \
@@ -1595,7 +1633,8 @@ static inline void ext4_clear_state_flags(struct ext4_inode_info *ei)
 					 EXT4_FEATURE_INCOMPAT_64BIT| \
 					 EXT4_FEATURE_INCOMPAT_FLEX_BG| \
 					 EXT4_FEATURE_INCOMPAT_MMP |	\
-					 EXT4_FEATURE_INCOMPAT_INLINE_DATA)
+					 EXT4_FEATURE_INCOMPAT_INLINE_DATA | \
+					 EXT4_FEATURE_INCOMPAT_ENCRYPT)
 #define EXT4_FEATURE_RO_COMPAT_SUPP	(EXT4_FEATURE_RO_COMPAT_SPARSE_SUPER| \
 					 EXT4_FEATURE_RO_COMPAT_LARGE_FILE| \
 					 EXT4_FEATURE_RO_COMPAT_GDT_CSUM| \
@@ -1605,6 +1644,7 @@ static inline void ext4_clear_state_flags(struct ext4_inode_info *ei)
 					 EXT4_FEATURE_RO_COMPAT_HUGE_FILE |\
 					 EXT4_FEATURE_RO_COMPAT_BIGALLOC |\
 					 EXT4_FEATURE_RO_COMPAT_METADATA_CSUM|\
+					 EXT4_FEATURE_RO_COMPAT_VERITY|\
 					 EXT4_FEATURE_RO_COMPAT_QUOTA)
 
 /*
@@ -1802,6 +1842,20 @@ struct dx_hash_info
 	u32		minor_hash;
 	int		hash_version;
 	u32		*seed;
+};
+
+struct ext4_str {
+	unsigned char *name;
+	u32 len;
+};
+
+struct ext4_filename {
+	const struct qstr *usr_fname;
+	struct ext4_str disk_name;
+	struct dx_hash_info hinfo;
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
+	struct ext4_str crypto_buf;
+#endif
 };
 
 
@@ -2198,6 +2252,32 @@ extern long ext4_ioctl(struct file *, unsigned int, unsigned long);
 extern long ext4_compat_ioctl(struct file *, unsigned int, unsigned long);
 
 /* migrate.c */
+extern int ext4_empty_dir(struct inode *);
+
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
+extern struct kmem_cache *ext4_crypt_info_cachep;
+extern struct workqueue_struct *ext4_read_workqueue;
+
+extern int ext4_init_crypto(void);
+extern void ext4_exit_crypto(void);
+extern bool ext4_valid_contents_enc_mode(uint32_t mode);
+extern bool ext4_valid_filenames_enc_mode(uint32_t mode);
+extern u32 ext4_fname_crypto_round_up(u32 size, u32 blksize);
+extern unsigned ext4_fname_encrypted_size(struct inode *inode, u32 ilen);
+extern int ext4_fname_crypto_alloc_buffer(struct inode *inode,
+					  u32 ilen, struct ext4_str *crypto_str);
+extern int _ext4_get_encryption_info(struct inode *inode);
+
+static inline int ext4_get_encryption_info(struct inode *inode)
+{
+	return fscrypt_get_encryption_info(inode);
+}
+extern void ext4_fname_crypto_free_buffer(struct ext4_str *crypto_str);
+extern int ext4_fname_setup_filename(struct inode *dir, const struct qstr *iname,
+				     int lookup, struct ext4_filename *fname);
+extern void ext4_fname_free_filename(struct ext4_filename *fname);
+extern int ext4_inherit_context(struct inode *parent, struct inode *child);
+#endif
 extern int ext4_ext_migrate(struct inode *);
 extern int ext4_ind_migrate(struct inode *inode);
 
@@ -2575,6 +2655,9 @@ extern int ext4_prepare_inline_data(handle_t *handle, struct inode *inode,
 extern int ext4_init_inline_data(handle_t *handle, struct inode *inode,
 				 unsigned int len);
 extern int ext4_destroy_inline_data(handle_t *handle, struct inode *inode);
+extern int ext4_mpage_readpages(struct address_space *mapping,
+				struct list_head *pages, struct page *page,
+				unsigned nr_pages);
 
 extern int ext4_readpage_inline(struct inode *inode, struct page *page);
 extern int ext4_try_to_write_inline_data(struct address_space *mapping,
@@ -2818,6 +2901,22 @@ extern struct mutex ext4__aio_mutex[EXT4_WQ_HASH_SZ];
 #define EXT4_RESIZING	0
 extern int ext4_resize_begin(struct super_block *sb);
 extern void ext4_resize_end(struct super_block *sb);
+#define ext4_encrypted_inode(inode) ((inode)->i_flags & S_ENCRYPTED)
+
+#ifdef CONFIG_EXT4_FS_ENCRYPTION
+int ext4_get_encryption_info(struct inode *inode);
+void ext4_free_encryption_info(struct inode *inode, struct ext4_crypt_info *ci);
+#else
+static inline int ext4_get_encryption_info(struct inode *inode)
+{
+	return 0;
+}
+static inline void ext4_free_encryption_info(struct inode *inode, struct ext4_crypt_info *ci)
+{
+}
+#endif
+
+extern void ext4_write_super(struct super_block *sb);
 
 #endif	/* __KERNEL__ */
 

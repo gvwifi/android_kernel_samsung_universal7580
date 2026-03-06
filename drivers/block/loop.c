@@ -1327,6 +1327,32 @@ static int lo_ioctl(struct block_device *bdev, fmode_t mode,
 		if ((mode & FMODE_WRITE) || capable(CAP_SYS_ADMIN))
 			err = loop_set_capacity(lo, bdev);
 		break;
+	case LOOP_SET_BLOCK_SIZE:
+		err = -EPERM;
+		if ((mode & FMODE_WRITE) || capable(CAP_SYS_ADMIN)) {
+			err = -ENXIO;
+			if (lo->lo_state != Lo_bound)
+				break;
+			err = -EINVAL;
+			if (arg < 512 || arg > PAGE_SIZE || !is_power_of_2(arg))
+				break;
+			blk_queue_logical_block_size(lo->lo_queue, arg);
+			blk_queue_physical_block_size(lo->lo_queue, arg);
+			blk_queue_io_min(lo->lo_queue, arg);
+			lo->lo_blocksize = arg;
+			err = 0;
+		}
+		break;
+	case LOOP_SET_DIRECT_IO:
+		err = -EPERM;
+		if ((mode & FMODE_WRITE) || capable(CAP_SYS_ADMIN)) {
+			err = -ENXIO;
+			if (lo->lo_state != Lo_bound)
+				break;
+			/* Direct I/O not fully supported in 3.10, just return success */
+			err = 0;
+		}
+		break;
 	default:
 		err = lo->ioctl ? lo->ioctl(lo, cmd, arg) : -EINVAL;
 	}
@@ -1481,6 +1507,8 @@ static int lo_compat_ioctl(struct block_device *bdev, fmode_t mode,
 		arg = (unsigned long) compat_ptr(arg);
 	case LOOP_SET_FD:
 	case LOOP_CHANGE_FD:
+	case LOOP_SET_BLOCK_SIZE:
+	case LOOP_SET_DIRECT_IO:
 		err = lo_ioctl(bdev, mode, cmd, arg);
 		break;
 	default:

@@ -7,26 +7,32 @@
  * modify it under the terms of the GNU General Public
  * License as published by the Free Software Foundation; either
  * version 2 of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public
- * License along with this program; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 021110-1307, USA.
- *
- * Based on sysfs:
- * 	sysfs is Copyright (C) 2001, 2002, 2003 Patrick Mochel
- *
- * configfs Copyright (C) 2005 Oracle.  All rights reserved.
  */
+
+#ifndef _CONFIGFS_INTERNAL_H_
+#define _CONFIGFS_INTERNAL_H_
+
+#ifdef pr_fmt
+#undef pr_fmt
+#endif
+
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
+#include <linux/fs.h>
+#include <linux/dcache.h>
+#include <linux/mutex.h>
+
+struct configfs_fragment {
+	atomic_t frag_count;
+	struct rw_semaphore frag_sem;
+	bool frag_dead;
+};
+
+void put_fragment(struct configfs_fragment *);
+struct configfs_fragment *get_fragment(struct configfs_fragment *);
 
 struct configfs_dirent {
 	atomic_t		s_count;
@@ -42,18 +48,20 @@ struct configfs_dirent {
 #ifdef CONFIG_LOCKDEP
 	int			s_depth;
 #endif
+	struct configfs_fragment *s_frag;
 };
 
 #define CONFIGFS_ROOT		0x0001
 #define CONFIGFS_DIR		0x0002
 #define CONFIGFS_ITEM_ATTR	0x0004
+#define CONFIGFS_ITEM_BIN_ATTR	0x0008
 #define CONFIGFS_ITEM_LINK	0x0020
 #define CONFIGFS_USET_DIR	0x0040
 #define CONFIGFS_USET_DEFAULT	0x0080
 #define CONFIGFS_USET_DROPPING	0x0100
 #define CONFIGFS_USET_IN_MKDIR	0x0200
 #define CONFIGFS_USET_CREATING	0x0400
-#define CONFIGFS_NOT_PINNED	(CONFIGFS_ITEM_ATTR)
+#define CONFIGFS_NOT_PINNED	(CONFIGFS_ITEM_ATTR | CONFIGFS_ITEM_BIN_ATTR)
 
 extern struct mutex configfs_symlink_mutex;
 extern spinlock_t configfs_dirent_lock;
@@ -63,16 +71,15 @@ extern struct kmem_cache *configfs_dir_cachep;
 extern int configfs_is_root(struct config_item *item);
 
 extern struct inode * configfs_new_inode(umode_t mode, struct configfs_dirent *, struct super_block *);
-extern int configfs_create(struct dentry *, umode_t mode, int (*init)(struct inode *));
-extern int configfs_inode_init(void);
-extern void configfs_inode_exit(void);
+extern int configfs_create(struct dentry *, umode_t mode, void (*init)(struct inode *));
 
 extern int configfs_create_file(struct config_item *, const struct configfs_attribute *);
-extern int configfs_make_dirent(struct configfs_dirent *,
-				struct dentry *, void *, umode_t, int);
+extern int configfs_create_bin_file(struct config_item *,
+				    const struct configfs_bin_attribute *);
+extern int configfs_make_dirent(struct configfs_dirent *, struct dentry *,
+				void *, umode_t, int, struct configfs_fragment *);
 extern int configfs_dirent_is_ready(struct configfs_dirent *);
 
-extern int configfs_add_file(struct dentry *, const struct configfs_attribute *, int);
 extern void configfs_hash_and_remove(struct dentry * dir, const char * name);
 
 extern const unsigned char * configfs_get_name(struct configfs_dirent *sd);
@@ -85,7 +92,7 @@ extern void configfs_release_fs(void);
 extern struct rw_semaphore configfs_rename_sem;
 extern const struct file_operations configfs_dir_operations;
 extern const struct file_operations configfs_file_operations;
-extern const struct file_operations bin_fops;
+extern const struct file_operations configfs_bin_file_operations;
 extern const struct inode_operations configfs_dir_inode_operations;
 extern const struct inode_operations configfs_root_inode_operations;
 extern const struct inode_operations configfs_symlink_inode_operations;
@@ -116,6 +123,13 @@ static inline struct configfs_attribute * to_attr(struct dentry * dentry)
 	return ((struct configfs_attribute *) sd->s_element);
 }
 
+static inline struct configfs_bin_attribute *to_bin_attr(struct dentry *dentry)
+{
+	struct configfs_attribute *attr = to_attr(dentry);
+
+	return container_of(attr, struct configfs_bin_attribute, cb_attr);
+}
+
 static inline struct config_item *configfs_get_config_item(struct dentry *dentry)
 {
 	struct config_item * item = NULL;
@@ -138,6 +152,7 @@ static inline void release_configfs_dirent(struct configfs_dirent * sd)
 {
 	if (!(sd->s_type & CONFIGFS_ROOT)) {
 		kfree(sd->s_iattr);
+		put_fragment(sd->s_frag);
 		kmem_cache_free(configfs_dir_cachep, sd);
 	}
 }
@@ -158,3 +173,59 @@ static inline void configfs_put(struct configfs_dirent * sd)
 		release_configfs_dirent(sd);
 }
 
+/* VFS compatibility for 3.10 */
+#ifndef d_inode
+#define d_inode(dentry) ((dentry)->d_inode)
+#endif
+
+#ifndef inode_lock
+#define inode_lock(inode) mutex_lock(&(inode)->i_mutex)
+#endif
+
+#ifndef inode_lock_nested
+#define inode_lock_nested(inode, subclass) mutex_lock_nested(&(inode)->i_mutex, subclass)
+#endif
+
+#ifndef inode_unlock
+#define inode_unlock(inode) mutex_unlock(&(inode)->i_mutex)
+#endif
+
+#ifndef d_really_is_positive
+#define d_really_is_positive(dentry) ((dentry)->d_inode != NULL)
+#endif
+
+#ifndef d_really_is_negative
+#define d_really_is_negative(dentry) ((dentry)->d_inode == NULL)
+#endif
+
+#ifndef d_count
+#define d_count(dentry) ((dentry)->d_count)
+#endif
+
+#ifndef simple_positive
+static inline int simple_positive(struct dentry *dentry)
+{
+	return dentry->d_inode && !d_unhashed(dentry);
+}
+#endif
+
+#ifndef current_time
+#define current_time(inode) CURRENT_TIME
+#endif
+
+#ifndef always_delete_dentry
+static inline int always_delete_dentry(const struct dentry *dentry)
+{
+	return 1;
+}
+#endif
+
+#ifndef dont_mount
+#define dont_mount(dentry) do { (dentry)->d_flags |= DCACHE_CANT_MOUNT; } while (0)
+#endif
+
+#ifndef down_write_killable
+#define down_write_killable(sem) (down_write(sem), 0)
+#endif
+
+#endif /* _CONFIGFS_INTERNAL_H_ */

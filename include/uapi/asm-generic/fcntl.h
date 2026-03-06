@@ -124,6 +124,18 @@
 #define F_GETOWNER_UIDS	17
 #endif
 
+/*
+ * Open File Description Locks
+ * Backported from Linux 3.15.
+ * Unlike POSIX locks, these work on the open file description,
+ * not per-process. pid field is ignored.
+ */
+#ifndef F_OFD_GETLK
+#define F_OFD_GETLK	36
+#define F_OFD_SETLK	37
+#define F_OFD_SETLKW	38
+#endif
+
 #define F_OWNER_TID	0
 #define F_OWNER_PID	1
 #define F_OWNER_PGRP	2

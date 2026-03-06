@@ -43,8 +43,59 @@
 #include <linux/backing-dev.h>
 #include <linux/pagevec.h>
 #include <linux/cleancache.h>
+#include <linux/fsverity.h>
 
 #include "ext4.h"
+#include "ext4_extents.h"	/* Needed for EXT_MAX_BLOCKS (verity reads past i_size) */
+
+/*
+ * Work struct for deferring verity verification of non-encrypted files.
+ * fsverity_verify_bio() calls read_merkle_tree_page() -> read_mapping_page()
+ * which can sleep, so we cannot call it from mpage_end_io() (softirq context).
+ * We reuse ext4_read_workqueue and offload to process context here, mirroring
+ * the encrypted-file path (ext4_crypto_ctx / completion_pages).
+ */
+struct ext4_verity_work {
+	struct work_struct	work;
+	struct bio		*bio;
+};
+
+static void ext4_verity_completion(struct work_struct *work)
+{
+#ifdef CONFIG_FS_VERITY
+	struct ext4_verity_work *vw =
+		container_of(work, struct ext4_verity_work, work);
+	struct bio	*bio	= vw->bio;
+	struct bio_vec	*bv;
+	int		i;
+
+	kfree(vw);
+
+	/*
+	 * We are now in process context (workqueue thread) — sleeping is safe.
+	 * Only verify DATA pages, not Merkle tree pages (stored past i_size).
+	 */
+	{
+		struct inode *inode =
+			bio->bi_io_vec[0].bv_page->mapping->host;
+		pgoff_t data_pages =
+			(i_size_read(inode) + PAGE_SIZE - 1) >> PAGE_SHIFT;
+		if (bio->bi_io_vec[0].bv_page->index < data_pages)
+			fsverity_verify_bio(bio);
+	}
+
+	bio_for_each_segment_all(bv, bio, i) {
+		struct page *page = bv->bv_page;
+
+		if (!PageError(page))
+			SetPageUptodate(page);
+		else
+			ClearPageUptodate(page);
+		unlock_page(page);
+	}
+	bio_put(bio);
+#endif /* CONFIG_FS_VERITY */
+}
 
 /*
  * Call ext4_decrypt on every single page, reusing the encryption
@@ -61,13 +112,27 @@ static void completion_pages(struct work_struct *work)
 
 	bio_for_each_segment_all(bv, bio, i) {
 		struct page *page = bv->bv_page;
-
 		int ret = ext4_decrypt(ctx, page);
+
 		if (ret) {
 			WARN_ON_ONCE(1);
 			SetPageError(page);
-		} else
-			SetPageUptodate(page);
+		} else {
+			/*
+			 * Only verify DATA pages, not Merkle tree pages.
+			 * Merkle tree pages are at page->index >= data_page_count
+			 * (stored past i_size).  Verifying them as data pages
+			 * would compute wrong hash indices and always fail.
+			 */
+			struct inode *h = page->mapping->host;
+			pgoff_t data_pages =
+				(i_size_read(h) + PAGE_SIZE - 1) >> PAGE_SHIFT;
+			if (fsverity_active(h) && page->index < data_pages &&
+			    !fsverity_verify_page(page))
+				SetPageError(page);
+			else
+				SetPageUptodate(page);
+		}
 		unlock_page(page);
 	}
 	ext4_release_crypto_ctx(ctx);
@@ -115,10 +180,44 @@ static void mpage_end_io(struct bio *bio, int err)
 			return;
 		}
 	}
+
+	if (!ext4_bio_encrypted(bio) &&
+	    fsverity_active(bio->bi_io_vec[0].bv_page->mapping->host)) {
+		/*
+		 * For non-encrypted verity DATA pages, defer verification to
+		 * process context via a workqueue.  fsverity_verify_bio() calls
+		 * verify_page() → read_merkle_tree_page() → read_mapping_page()
+		 * which can sleep.  mpage_end_io is the bio->bi_end_io callback
+		 * and may be invoked from softirq/interrupt context where
+		 * sleeping is illegal — calling it directly here would deadlock.
+		 *
+		 * Merkle tree pages (index >= data_page_count) skip verification
+		 * entirely; they are just read from disk and cached as-is.
+		 */
+		struct inode *inode =
+			bio->bi_io_vec[0].bv_page->mapping->host;
+		pgoff_t data_pages =
+			(i_size_read(inode) + PAGE_SIZE - 1) >> PAGE_SHIFT;
+
+		if (!err && bio->bi_io_vec[0].bv_page->index < data_pages) {
+			struct ext4_verity_work *vw =
+				kmalloc(sizeof(*vw), GFP_ATOMIC);
+			if (likely(vw)) {
+				INIT_WORK(&vw->work, ext4_verity_completion);
+				vw->bio = bio;
+				queue_work(ext4_read_workqueue, &vw->work);
+				return; /* pages stay locked until workqueue runs */
+			}
+			/* GFP_ATOMIC OOM: mark all pages as error below */
+			err = -ENOMEM;
+		}
+		/* Merkle tree pages or error: fall through to normal unlock */
+	}
+
 	bio_for_each_segment_all(bv, bio, i) {
 		struct page *page = bv->bv_page;
 
-		if (!err) {
+		if (!err && !PageError(page)) {
 			SetPageUptodate(page);
 		} else {
 			ClearPageUptodate(page);
@@ -175,7 +274,17 @@ int ext4_mpage_readpages(struct address_space *mapping,
 
 		block_in_file = (sector_t)page->index << (PAGE_CACHE_SHIFT - blkbits);
 		last_block = block_in_file + nr_pages * blocks_per_page;
-		last_block_in_file = (i_size_read(inode) + blocksize - 1) >> blkbits;
+		/*
+		 * For fs-verity files, the Merkle tree and verity descriptor are
+		 * stored past i_size in the extent tree. Do NOT clamp last_block
+		 * to i_size for verity inodes; ext4_map_blocks() will correctly
+		 * map those blocks and failing to read them causes desc_size to
+		 * read as 0 → -EUCLEAN ("verity descriptor missing or corrupted").
+		 */
+		if (IS_VERITY(inode))
+			last_block_in_file = EXT_MAX_BLOCKS;
+		else
+			last_block_in_file = (i_size_read(inode) + blocksize - 1) >> blkbits;
 		if (last_block > last_block_in_file)
 			last_block = last_block_in_file;
 		page_block = 0;

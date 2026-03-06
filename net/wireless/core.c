@@ -532,6 +532,10 @@ int wiphy_register(struct wiphy *wiphy)
 	if (res)
 		return res;
 
+	/* Set default max AKM suites if not set by driver */
+	if (!wiphy->max_num_akm_suites)
+		wiphy->max_num_akm_suites = NL80211_MAX_NR_AKM_SUITES;
+
 	/* sanity check supported bands/channels */
 	for (band = 0; band < IEEE80211_NUM_BANDS; band++) {
 		sband = wiphy->bands[band];

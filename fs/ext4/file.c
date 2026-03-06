@@ -26,6 +26,7 @@
 #include <linux/aio.h>
 #include <linux/quotaops.h>
 #include <linux/pagevec.h>
+#include <linux/fsverity.h>
 #include "ext4.h"
 #include "ext4_jbd2.h"
 #include "xattr.h"
@@ -275,7 +276,8 @@ static int ext4_file_open(struct inode * inode, struct file * filp)
 		if (unlikely(jinode != NULL))
 			jbd2_free_inode(jinode);
 	}
-	return dquot_file_open(inode, filp);
+	
+	return fsverity_file_open(inode, filp) ?: dquot_file_open(inode, filp);
 }
 
 /*

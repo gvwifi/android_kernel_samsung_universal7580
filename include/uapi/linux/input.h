@@ -156,6 +156,21 @@ struct input_keymap_entry {
 #define EVIOCGSUSPENDBLOCK	_IOR('E', 0x91, int)			/* get suspend block enable */
 #define EVIOCSSUSPENDBLOCK	_IOW('E', 0x91, int)			/* set suspend block enable */
 
+/**
+ * struct input_mask - event mask for EVIOCGMASK/EVIOCSMASK
+ * @type: event type
+ * @codes_size: size of codes_ptr buffer in bytes
+ * @codes_ptr: pointer to user-space bitmap
+ */
+struct input_mask {
+	__u32 type;
+	__u32 codes_size;
+	__u64 codes_ptr;
+};
+
+#define EVIOCGMASK		_IOR('E', 0x92, struct input_mask)	/* Get event-masks */
+#define EVIOCSMASK		_IOW('E', 0x93, struct input_mask)	/* Set event-masks */
+
 #define EVIOCSCLOCKID		_IOW('E', 0xa0, int)			/* Set clockid to be used for timestamps */
 
 /*

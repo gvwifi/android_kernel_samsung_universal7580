@@ -67,6 +67,10 @@ EXPORT_SYMBOL(test_and_change_bit);
 EXPORT_SYMBOL(_mcount);
 #endif
 	/* caching functions */
+extern void __dma_inv_range(const void *, const void *);
+extern void __dma_clean_range(const void *, const void *);
+// __dma_flush_range is already declared in cacheflush.h
+
 EXPORT_SYMBOL(__dma_inv_range);
 EXPORT_SYMBOL(__dma_clean_range);
 EXPORT_SYMBOL(__dma_flush_range);

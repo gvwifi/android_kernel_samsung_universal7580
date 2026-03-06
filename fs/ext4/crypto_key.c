@@ -15,6 +15,7 @@
 #include <uapi/linux/keyctl.h>
 
 #include "ext4.h"
+#include "ext4_crypto.h"
 #include "xattr.h"
 
 static void derive_crypt_complete(struct crypto_async_request *req, int rc)

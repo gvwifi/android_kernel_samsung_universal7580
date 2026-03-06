@@ -11,11 +11,14 @@
 #define SECCOMP_MODE_FILTER	2 /* uses user-supplied filter. */
 
 /* Valid operations for seccomp syscall. */
-#define SECCOMP_SET_MODE_STRICT	0
-#define SECCOMP_SET_MODE_FILTER	1
+#define SECCOMP_SET_MODE_STRICT		0
+#define SECCOMP_SET_MODE_FILTER		1
+#define SECCOMP_GET_ACTION_AVAIL	2
 
 /* Valid flags for SECCOMP_SET_MODE_FILTER */
 #define SECCOMP_FILTER_FLAG_TSYNC	1
+#define SECCOMP_FILTER_FLAG_LOG		2
+#define SECCOMP_FILTER_FLAG_SPEC_ALLOW	4
 
 /*
  * All BPF programs must return a 32-bit value.
@@ -25,16 +28,23 @@
  * The ordering ensures that a min_t() over composed return values always
  * selects the least permissive choice.
  */
-#define SECCOMP_RET_KILL	0x00000000U /* kill the task immediately */
+#define SECCOMP_RET_KILL_PROCESS 0x80000000U /* kill the process */
+#define SECCOMP_RET_KILL_THREAD	0x00000000U /* kill the thread */
+#define SECCOMP_RET_KILL	SECCOMP_RET_KILL_THREAD
 #define SECCOMP_RET_TRAP	0x00030000U /* disallow and force a SIGSYS */
 #define SECCOMP_RET_ERRNO	0x00050000U /* returns an errno */
 #define SECCOMP_RET_TRACE	0x7ff00000U /* pass to a tracer or disallow */
+#define SECCOMP_RET_LOG		0x7ffe0000U /* allow after logging */
 #define SECCOMP_RET_ALLOW	0x7fff0000U /* allow */
 
 /* Masks for the return value sections. */
+#define SECCOMP_RET_ACTION_FULL	0xffff0000U
 #define SECCOMP_RET_ACTION	0x7fff0000U
 #define SECCOMP_RET_DATA	0x0000ffffU
 
+
+/* Offset into seccomp_data to be checked by the filter. */
+#define SECCOMP_LD_SD (offsetof(struct seccomp_data, args[0]))
 /**
  * struct seccomp_data - the format the BPF program executes over.
  * @nr: the system call number

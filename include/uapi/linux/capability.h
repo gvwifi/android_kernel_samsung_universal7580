@@ -343,7 +343,44 @@ struct vfs_cap_data {
 
 #define CAP_BLOCK_SUSPEND    36
 
-#define CAP_LAST_CAP         CAP_BLOCK_SUSPEND
+/**
+ * CAP_AUDIT_READ
+ *
+ * Allow reading the audit log via multicast netlink socket.
+ */
+
+#define CAP_AUDIT_READ      37
+
+/**
+ * CAP_PERFMON
+ *
+ * Allow system performance and observability privileged operations
+ * using perf_events, i915_perf and other kernel subsystems
+ */
+
+#define CAP_PERFMON         38
+
+/**
+ * CAP_BPF
+ *
+ * CAP_BPF allows the following BPF operations:
+ * - Execute BPF programs with privileged operations
+ * - Load non-root BPF maps
+ * - Use BPF to inspect kernel internal state
+ */
+
+#define CAP_BPF             39
+
+/**
+ * CAP_CHECKPOINT_RESTORE
+ *
+ * Allow checkpoint/restore related operations.
+ * Introduced in kernel 5.9
+ */
+
+#define CAP_CHECKPOINT_RESTORE 40
+
+#define CAP_LAST_CAP         CAP_CHECKPOINT_RESTORE
 
 #define cap_valid(x) ((x) >= 0 && (x) <= CAP_LAST_CAP)
 

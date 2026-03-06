@@ -92,6 +92,7 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
+#include <linux/psi.h>
 
 #include <linux/sec_debug.h>
 
@@ -367,7 +368,8 @@ static inline struct rq *__task_rq_lock(struct task_struct *p)
 /*
  * task_rq_lock - lock p->pi_lock and lock the rq @p resides on.
  */
-static struct rq *task_rq_lock(struct task_struct *p, unsigned long *flags)
+/* Backport: Exposed for PSI */
+struct rq *task_rq_lock(struct task_struct *p, unsigned long *flags)
 	__acquires(p->pi_lock)
 	__acquires(rq->lock)
 {
@@ -390,7 +392,8 @@ static void __task_rq_unlock(struct rq *rq)
 	raw_spin_unlock(&rq->lock);
 }
 
-static inline void
+/* Backport: Exposed for PSI */
+void
 task_rq_unlock(struct rq *rq, struct task_struct *p, unsigned long *flags)
 	__releases(rq->lock)
 	__releases(p->pi_lock)
@@ -865,15 +868,21 @@ static void set_load_weight(struct task_struct *p)
 
 static void enqueue_task(struct rq *rq, struct task_struct *p, int flags)
 {
-	update_rq_clock(rq);
-	sched_info_queued(p);
+	/* Backport: ENQUEUE_RESTORE not available in 3.10 */
+	/* if (!(flags & ENQUEUE_RESTORE)) */ {
+		sched_info_queued(p);
+		psi_enqueue(p, flags & ENQUEUE_WAKEUP);
+	}
 	p->sched_class->enqueue_task(rq, p, flags);
 }
 
 static void dequeue_task(struct rq *rq, struct task_struct *p, int flags)
 {
-	update_rq_clock(rq);
-	sched_info_dequeued(p);
+	/* Backport: DEQUEUE_SAVE not available in 3.10 */
+	/* if (!(flags & DEQUEUE_SAVE)) */ {
+		sched_info_dequeued(p);
+		psi_dequeue(p, flags & DEQUEUE_SLEEP);
+	}
 	p->sched_class->dequeue_task(rq, p, flags);
 }
 
@@ -1662,6 +1671,7 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	cpu = select_task_rq(p, SD_BALANCE_WAKE, wake_flags);
 	if (task_cpu(p) != cpu) {
 		wake_flags |= WF_MIGRATED;
+		psi_ttwu_dequeue(p);
 		set_task_cpu(p, cpu);
 	}
 #endif /* CONFIG_SMP */
@@ -1743,6 +1753,8 @@ EXPORT_SYMBOL(wake_up_process);
  */
 int wake_up_process_no_notif(struct task_struct *p)
 {
+	if (!p)
+		return 0;
 	WARN_ON(task_is_stopped_or_traced(p));
 	return try_to_wake_up(p, TASK_NORMAL, WF_NO_NOTIFIER);
 }
@@ -7189,6 +7201,8 @@ void __init sched_init(void)
 	int i, j;
 	unsigned long alloc_size = 0, ptr;
 
+	psi_init();
+
 	sec_gaf_supply_rqinfo(offsetof(struct rq, curr), offsetof(struct cfs_rq, rq));
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -8005,7 +8019,7 @@ cpu_cgroup_allow_attach(struct cgroup *cgrp, struct cgroup_taskset *tset)
 		tcred = __task_cred(task);
 
 		if ((current != task) && !capable(CAP_SYS_NICE) &&
-		    cred->euid != tcred->uid && cred->euid != tcred->suid)
+		    !uid_eq(cred->euid, tcred->uid) && !uid_eq(cred->euid, tcred->suid))
 			return -EACCES;
 	}
 

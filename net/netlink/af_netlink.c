@@ -79,6 +79,8 @@ struct listeners {
 #define NETLINK_RECV_PKTINFO	0x2
 #define NETLINK_BROADCAST_SEND_ERROR	0x4
 #define NETLINK_RECV_NO_ENOBUFS	0x8
+#define NETLINK_F_CAP_ACK	0x10
+#define NETLINK_F_EXT_ACK	0x20
 
 static inline int netlink_is_kernel(struct sock *sk)
 {
@@ -2018,6 +2020,20 @@ static int netlink_setsockopt(struct socket *sock, int level, int optname,
 		}
 		err = 0;
 		break;
+	case NETLINK_CAP_ACK:
+		if (val)
+			nlk->flags |= NETLINK_F_CAP_ACK;
+		else
+			nlk->flags &= ~NETLINK_F_CAP_ACK;
+		err = 0;
+		break;
+	case NETLINK_EXT_ACK:
+		if (val)
+			nlk->flags |= NETLINK_F_EXT_ACK;
+		else
+			nlk->flags &= ~NETLINK_F_EXT_ACK;
+		err = 0;
+		break;
 #ifdef CONFIG_NETLINK_MMAP
 	case NETLINK_RX_RING:
 	case NETLINK_TX_RING: {
@@ -2084,6 +2100,26 @@ static int netlink_getsockopt(struct socket *sock, int level, int optname,
 			return -EINVAL;
 		len = sizeof(int);
 		val = nlk->flags & NETLINK_RECV_NO_ENOBUFS ? 1 : 0;
+		if (put_user(len, optlen) ||
+		    put_user(val, optval))
+			return -EFAULT;
+		err = 0;
+		break;
+	case NETLINK_CAP_ACK:
+		if (len < sizeof(int))
+			return -EINVAL;
+		len = sizeof(int);
+		val = nlk->flags & NETLINK_F_CAP_ACK ? 1 : 0;
+		if (put_user(len, optlen) ||
+		    put_user(val, optval))
+			return -EFAULT;
+		err = 0;
+		break;
+	case NETLINK_EXT_ACK:
+		if (len < sizeof(int))
+			return -EINVAL;
+		len = sizeof(int);
+		val = nlk->flags & NETLINK_F_EXT_ACK ? 1 : 0;
 		if (put_user(len, optlen) ||
 		    put_user(val, optval))
 			return -EFAULT;
@@ -2615,9 +2651,12 @@ void netlink_ack(struct sk_buff *in_skb, struct nlmsghdr *nlh, int err)
 	struct nlmsghdr *rep;
 	struct nlmsgerr *errmsg;
 	size_t payload = sizeof(*errmsg);
+	struct netlink_sock *nlk = nlk_sk(NETLINK_CB(in_skb).sk);
 
-	/* error messages get the original request appened */
-	if (err)
+	/* Error messages get the original request appended, unless
+	 * the user has opted into capped ack mode (NETLINK_CAP_ACK).
+	 */
+	if (err && !(nlk && (nlk->flags & NETLINK_F_CAP_ACK)))
 		payload += nlmsg_len(nlh);
 
 	skb = netlink_alloc_skb(in_skb->sk, nlmsg_total_size(payload),
@@ -2640,7 +2679,7 @@ void netlink_ack(struct sk_buff *in_skb, struct nlmsghdr *nlh, int err)
 			  NLMSG_ERROR, payload, 0);
 	errmsg = nlmsg_data(rep);
 	errmsg->error = err;
-	memcpy(&errmsg->msg, nlh, err ? nlh->nlmsg_len : sizeof(*nlh));
+	memcpy(&errmsg->msg, nlh, payload > sizeof(*errmsg) ? nlh->nlmsg_len : sizeof(*nlh));
 	netlink_unicast(in_skb->sk, skb, NETLINK_CB(in_skb).portid, MSG_DONTWAIT);
 }
 EXPORT_SYMBOL(netlink_ack);

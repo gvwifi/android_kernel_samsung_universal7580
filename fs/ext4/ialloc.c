@@ -958,6 +958,12 @@ got:
 	if (err)
 		goto fail_free_drop;
 
+	if (ext4_encrypted_inode(dir)) {
+		err = ext4_inherit_context(dir, inode);
+		if (err)
+			goto fail_free_drop;
+	}
+
 	if (EXT4_HAS_INCOMPAT_FEATURE(sb, EXT4_FEATURE_INCOMPAT_EXTENTS)) {
 		/* set extent flag only for directory, file and normal symlink*/
 		if (S_ISDIR(mode) || S_ISREG(mode) || S_ISLNK(mode)) {

@@ -205,7 +205,7 @@ do {									\
 		__put_user_asm("str",  "%w", __pu_val, (ptr), (err));	\
 		break;							\
 	case 8:								\
-		__put_user_asm("str",  "%", __pu_val, (ptr), (err));	\
+		__put_user_asm("str",  "%x", __pu_val, (ptr), (err));	\
 		break;							\
 	default:							\
 		BUILD_BUG();						\

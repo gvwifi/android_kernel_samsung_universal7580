@@ -76,4 +76,7 @@
 
 #define SO_SELECT_ERR_QUEUE	45
 
+/* Backported from Linux 4.13 for Android network tagging */
+#define SO_COOKIE		57
+
 #endif /* __ASM_GENERIC_SOCKET_H */

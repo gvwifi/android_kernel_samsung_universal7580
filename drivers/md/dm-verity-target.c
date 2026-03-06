@@ -19,6 +19,7 @@
 
 #include <linux/module.h>
 #include <linux/reboot.h>
+#include <linux/vmalloc.h>
 
 #define DM_MSG_PREFIX			"verity"
 
@@ -33,6 +34,7 @@
 #define DM_VERITY_OPT_LOGGING		"ignore_corruption"
 #define DM_VERITY_OPT_RESTART		"restart_on_corruption"
 #define DM_VERITY_OPT_IGN_ZEROES	"ignore_zero_blocks"
+#define DM_VERITY_OPT_CHECK_AT_MOST_ONCE "check_at_most_once"
 
 #define DM_VERITY_OPTS_MAX		(2 + DM_VERITY_OPTS_FEC)
 
@@ -437,6 +439,10 @@ static int verity_verify_io(struct dm_verity_io *io)
 			continue;
 		}
 
+		if (v->validated_blocks &&
+		    test_bit(io->block + b, v->validated_blocks))
+			continue;
+
 		r = verity_hash_init(v, desc);
 		if (unlikely(r < 0))
 			return r;
@@ -454,8 +460,11 @@ static int verity_verify_io(struct dm_verity_io *io)
 			return r;
 
 		if (likely(memcmp(verity_io_real_digest(v, io),
-				  verity_io_want_digest(v, io), v->digest_size) == 0))
+				  verity_io_want_digest(v, io), v->digest_size) == 0)) {
+			if (v->validated_blocks)
+				set_bit(io->block + b, v->validated_blocks);
 			continue;
+		}
 		else if (verity_fec_decode(v, io, DM_VERITY_BLOCK_TYPE_DATA,
 					   io->block + b, NULL, start_vector, start_offset) == 0)
 			continue;
@@ -761,6 +770,9 @@ static void verity_dtr(struct dm_target *ti)
 
 	verity_fec_dtr(v);
 
+	if (v->validated_blocks)
+		vfree(v->validated_blocks);
+
 	kfree(v);
 }
 
@@ -830,6 +842,22 @@ static int verity_parse_opt_args(struct dm_arg_set *as, struct dm_verity *v)
 			if (r) {
 				ti->error = "Cannot allocate zero digest";
 				return r;
+			}
+			continue;
+
+		} else if (!strcasecmp(arg_name, DM_VERITY_OPT_CHECK_AT_MOST_ONCE)) {
+			struct dm_target *ti = v->ti;
+
+			if (!v->data_blocks) {
+				ti->error = "check_at_most_once requires data blocks to be known";
+				return -EINVAL;
+			}
+			
+			/* We need to allocate the bitmap. v->data_blocks is in blocks */
+			v->validated_blocks = vzalloc(BITS_TO_LONGS(v->data_blocks) * sizeof(unsigned long));
+			if (!v->validated_blocks) {
+				ti->error = "Cannot allocate validated_blocks bitmap";
+				return -ENOMEM;
 			}
 			continue;
 

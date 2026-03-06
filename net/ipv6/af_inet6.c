@@ -62,13 +62,14 @@
 
 #include <asm/uaccess.h>
 #include <linux/mroute6.h>
+#include <linux/bpf-cgroup.h>
 
 #ifdef CONFIG_ANDROID_PARANOID_NETWORK
 #include <linux/android_aid.h>
 
 static inline int current_has_network(void)
 {
-	return in_egroup_p(AID_INET) || capable(CAP_NET_RAW);
+	return in_egroup_p(make_kgid(&init_user_ns, AID_INET)) || capable(CAP_NET_RAW);
 }
 #else
 static inline int current_has_network(void)
@@ -267,6 +268,14 @@ lookup_protocol:
 		if (err) {
 			sk_common_release(sk);
 			goto out;
+		}
+	}
+
+	/* Run cgroup BPF socket creation filter */
+	if (!err) {
+		err = BPF_CGROUP_RUN_PROG_INET_SOCK(sk);
+		if (err) {
+			sk_common_release(sk);
 		}
 	}
 out:

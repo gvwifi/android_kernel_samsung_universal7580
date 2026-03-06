@@ -55,15 +55,26 @@
 #include <net/xfrm.h>
 #include <net/checksum.h>
 #include <linux/mroute6.h>
+#include <linux/bpf-cgroup.h>
 
 int __ip6_local_out(struct sk_buff *skb)
 {
 	int len;
+	struct sock *sk = skb->sk;
 
 	len = skb->len - sizeof(struct ipv6hdr);
 	if (len > IPV6_MAXPLEN)
 		len = 0;
 	ipv6_hdr(skb)->payload_len = htons(len);
+
+	/* Run cgroup BPF egress filter before netfilter */
+	if (sk) {
+		int ret = BPF_CGROUP_RUN_PROG_INET_EGRESS(sk, skb);
+		if (ret) {
+			kfree_skb(skb);
+			return ret;
+		}
+	}
 
 	return nf_hook(NFPROTO_IPV6, NF_INET_LOCAL_OUT, skb, NULL,
 		       skb_dst(skb)->dev, dst_output);

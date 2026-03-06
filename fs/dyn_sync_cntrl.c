@@ -24,7 +24,7 @@ static DEFINE_MUTEX(fsync_mutex);
 // Declarations
 
 //bool power_suspend_active __read_mostly = false;
-bool dyn_fsync_active __read_mostly = DYN_FSYNC_ACTIVE_DEFAULT;
+bool dyn_fsync_active __read_mostly = false; // Disabled by default to prevent issues
 
 
 extern void sync_filesystems(int wait);
@@ -114,10 +114,7 @@ static struct power_suspend dyn_fsync_power_suspend_handler =
 static int dyn_fsync_panic_event(struct notifier_block *this,
 		unsigned long event, void *ptr)
 {
-	power_suspend_active = true;
-	dyn_fsync_force_flush();
-//	pr_warn("dynamic fsync: panic - force flush!\n");
-
+	// Do NOT force flush on panic. Storage may be dead and cause a deadlock.
 	return NOTIFY_DONE;
 }
 

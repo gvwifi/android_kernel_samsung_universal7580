@@ -461,6 +461,39 @@ asmlinkage long compat_sys_fcntl64(unsigned int fd, unsigned int cmd,
 		}
 		break;
 
+	/*
+	 * OFD locks use flock64 structs, like F_GETLK64/F_SETLK64/F_SETLKW64,
+	 * but the cmd values are passed through as-is (not converted) since
+	 * fcntl_setlk/fcntl_getlk handle the F_OFD_* commands directly.
+	 */
+	case F_OFD_GETLK:
+		ret = get_compat_flock64(&f, compat_ptr(arg));
+		if (ret != 0)
+			break;
+		old_fs = get_fs();
+		set_fs(KERNEL_DS);
+		ret = sys_fcntl(fd, cmd, (unsigned long)&f);
+		set_fs(old_fs);
+		if (ret == 0) {
+			if (f.l_start > COMPAT_LOFF_T_MAX)
+				ret = -EOVERFLOW;
+			if (f.l_len > COMPAT_LOFF_T_MAX)
+				f.l_len = COMPAT_LOFF_T_MAX;
+			if (ret == 0)
+				ret = put_compat_flock64(&f, compat_ptr(arg));
+		}
+		break;
+	case F_OFD_SETLK:
+	case F_OFD_SETLKW:
+		ret = get_compat_flock64(&f, compat_ptr(arg));
+		if (ret != 0)
+			break;
+		old_fs = get_fs();
+		set_fs(KERNEL_DS);
+		ret = sys_fcntl(fd, cmd, (unsigned long)&f);
+		set_fs(old_fs);
+		break;
+
 	default:
 		ret = sys_fcntl(fd, cmd, arg);
 		break;

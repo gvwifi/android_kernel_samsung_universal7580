@@ -411,6 +411,9 @@
 #define __NR_renameat2			(__NR_SYSCALL_BASE+382)
 #define __NR_seccomp			(__NR_SYSCALL_BASE+383)
 #define __NR_getrandom			(__NR_SYSCALL_BASE+384)
+#define __NR_memfd_create		(__NR_SYSCALL_BASE+385)
+#define __NR_bpf			(__NR_SYSCALL_BASE+386)
+/* __NR_execveat (387) not implemented in kernel 3.10 */
 
 /*
  * The following SWIs are ARM private.

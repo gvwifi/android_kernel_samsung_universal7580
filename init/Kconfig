@@ -798,9 +798,32 @@ config ARCH_WANTS_PROT_NUMA_PROT_NONE
 
 config ARCH_USES_NUMA_PROT_NONE
 	bool
-	default y
-	depends on ARCH_WANTS_PROT_NUMA_PROT_NONE
-	depends on NUMA_BALANCING
+
+config ANDROID_TREBLE_SPOOF_KERNEL_VERSION
+	bool "Spoof kernel version for Treble VTS/CTS"
+	default n
+	help
+	  This option allows spoofing the kernel version reported to userspace
+	  programs (like init, bpf loaders, etc.) to bypass version checks associated
+	  with Android Vendor Interface (VINTF) requirements. This is useful for
+	  running newer Android versions on older kernels (e.g. 3.10/3.18/4.4).
+
+config ANDROID_TREBLE_SPOOF_KERNEL_VERSION_PREFIX
+	string "Spoofed kernel version prefix"
+	depends on ANDROID_TREBLE_SPOOF_KERNEL_VERSION
+	default "4.14.0"
+	help
+	  The kernel version prefix to report (e.g. "4.14.0"). This string is
+	  prepended to the actual kernel release string or replaces it dynamically.
+
+config ANDROID_TREBLE_SPOOF_BPF_KERNEL_VERSION_PREFIX
+	string "Spoofed BPF kernel version prefix"
+	depends on ANDROID_TREBLE_SPOOF_KERNEL_VERSION
+	default "4.14.0"
+	help
+	  Specific kernel version prefix to report to BPF-related tools like
+	  bpfloader or netbpfload. Often needs to meet minimum requirements
+	  (e.g. 4.9 or 4.14 for eBPF support).
 
 config NUMA_BALANCING_DEFAULT_ENABLED
 	bool "Automatically enable NUMA aware memory/task placement"
@@ -1045,6 +1068,14 @@ config DEBUG_BLK_CGROUP
 	Enable some debugging help. Currently it exports additional stat
 	files in a cgroup which can be useful for debugging.
 
+config CGROUP_BPF
+	bool "Attach eBPF programs to a cgroup"
+	depends on BPF_SYSCALL
+	default n
+	help
+	  Allows to attach eBPF programs to a cgroup/to run eBPF
+	  programs for cgroup-aware hooks.
+
 endif # CGROUPS
 
 config CHECKPOINT_RESTORE
@@ -1245,6 +1276,34 @@ config ANON_INODES
 config HAVE_UID16
 	bool
 
+config PSI
+	bool "Pressure stall information tracking"
+	help
+	  Collect metrics that indicate how overcommitted the CPU, memory,
+	  and IO capacity are in the system.
+
+	  If you say Y here, the kernel will create /proc/pressure/ with the
+	  pressure statistics files cpu, memory, and io. These indicate the
+	  share of wallclock time during which some or all tasks in the
+	  system are delayed due to contention of the respective resource.
+
+	  In kernels with cgroup support, cgroups (cgroup2 only) will
+	  have cpu.pressure, memory.pressure, and io.pressure files,
+	  which aggregate pressure stalls for the grouped tasks only.
+
+	  For more details see Documentation/accounting/psi.txt.
+
+	  Say N if unsure.
+
+config PSI_DEFAULT_DISABLED
+	bool "Require boot parameter to enable pressure stall information tracking"
+	default n
+	depends on PSI
+	help
+	  If set, pressure stall information tracking will be disabled
+	  per default but can be enabled through passing psi=1 on the
+	  kernel command line during boot.
+
 config SYSCTL_EXCEPTION_TRACE
 	bool
 	help
@@ -1276,6 +1335,43 @@ config PANIC_TIMEOUT
 	default 0
 	help
 	  Set default panic timeout.
+
+config ANDROID_TREBLE_SPOOF_KERNEL_VERSION
+	bool "Spoof kernel version for Android Treble"
+	default n
+	help
+	  If this option is enabled, the kernel version will be spoofed for
+	  Android Treble.
+
+config ANDROID_TREBLE_BYPASS_KERNEL_VERSION_CHECKS
+	bool "Bypass kernel version checks for Android Treble"
+	default n
+	depends on ANDROID_TREBLE_SPOOF_KERNEL_VERSION
+	help
+	  If this option is enabled, the kernel version checks for Android Treble
+	  will be bypassed.
+
+config ANDROID_TREBLE_SPOOF_KERNEL_VERSION_PREFIX
+	string "Spoofed kernel version prefix for Android Treble"
+	depends on ANDROID_TREBLE_SPOOF_KERNEL_VERSION
+	default "4.9.337"
+	help
+	  The prefix of the spoofed kernel version for Android Treble.
+
+config ANDROID_TREBLE_SPOOF_BPF_KERNEL_VERSION_PREFIX
+	string "Spoofed BPF kernel version prefix for Android Treble"
+	depends on ANDROID_TREBLE_SPOOF_KERNEL_VERSION
+	default "5.4.295"
+	help
+	  The prefix of the spoofed BPF kernel version for Android Treble.
+
+config ANDROID_TREBLE_SPOOF_BPF_KERNEL_BITNESS
+	bool "Spoof BPF kernel bitness for Android Treble"
+	depends on ANDROID_TREBLE_SPOOF_KERNEL_VERSION
+	default n
+	help
+	  If this option is enabled, the BPF kernel bitness will be spoofed for
+	  Android Treble.
 
 menuconfig EXPERT
 	bool "Configure standard kernel features (expert users)"
@@ -1482,6 +1578,8 @@ config PERF_USE_VMALLOC
 	bool
 	help
 	  See tools/perf/design.txt for details
+
+source "kernel/bpf/Kconfig"
 
 menu "Kernel Performance Events And Counters"
 

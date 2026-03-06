@@ -45,6 +45,7 @@
  */
 struct wakeup_source {
 	const char 		*name;
+	int			id;
 	struct list_head	entry;
 	spinlock_t		lock;
 	struct timer_list	timer;
@@ -63,6 +64,7 @@ struct wakeup_source {
 	unsigned long		relax_count;
 	unsigned long		expire_count;
 	unsigned long		wakeup_count;
+	struct device		*dev;
 	bool			active:1;
 	bool			autosleep_enabled:1;
 #ifdef CONFIG_SEC_PM_DEBUG

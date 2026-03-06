@@ -115,6 +115,7 @@
 #include <net/xfrm.h>
 #include <net/net_namespace.h>
 #include <net/secure_seq.h>
+#include <linux/bpf-cgroup.h>
 #ifdef CONFIG_IP_MROUTE
 #include <linux/mroute.h>
 #endif
@@ -124,7 +125,7 @@
 
 static inline int current_has_network(void)
 {
-	return in_egroup_p(AID_INET) || capable(CAP_NET_RAW);
+	return in_egroup_p(make_kgid(&init_user_ns, AID_INET)) || capable(CAP_NET_RAW);
 }
 #else
 static inline int current_has_network(void)
@@ -428,6 +429,14 @@ lookup_protocol:
 		err = sk->sk_prot->init(sk);
 		if (err)
 			sk_common_release(sk);
+	}
+
+	/* Run cgroup BPF socket creation filter */
+	if (!err) {
+		err = BPF_CGROUP_RUN_PROG_INET_SOCK(sk);
+		if (err) {
+			sk_common_release(sk);
+		}
 	}
 out:
 	return err;

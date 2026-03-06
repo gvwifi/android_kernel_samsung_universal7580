@@ -36,7 +36,7 @@ kernel/bounds.s: kernel/bounds.c FORCE
 	$(Q)mkdir -p $(dir $@)
 	$(call if_changed_dep,cc_s_c)
 
-CFLAGS_bounds.o := -fno-integrated-as
+CFLAGS_bounds.o :=
 
 $(obj)/$(bounds-file): kernel/bounds.s Kbuild
 	$(Q)mkdir -p $(dir $@)
@@ -52,7 +52,7 @@ always  += $(offsets-file)
 targets += $(offsets-file)
 targets += arch/$(SRCARCH)/kernel/asm-offsets.s
 
-CFLAGS_asm-offsets.o := -fno-integrated-as
+CFLAGS_asm-offsets.o :=
 
 
 # Default sed regexp - multiline due to syntax constraints

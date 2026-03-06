@@ -136,7 +136,12 @@ EXPORT_SYMBOL_GPL(usb_gadget_set_state);
 static inline int usb_gadget_udc_start(struct usb_gadget *gadget,
 		struct usb_gadget_driver *driver)
 {
-	return gadget->ops->udc_start(gadget, driver);
+	int ret;
+	printk(KERN_ERR "usb_gadget_udc_start[udc-core]: gadget=%p ops=%p udc_start=%p driver=%p\n",
+		gadget, gadget->ops, gadget->ops->udc_start, driver);
+	ret = gadget->ops->udc_start(gadget, driver);
+	printk(KERN_ERR "usb_gadget_udc_start[udc-core]: udc_start returned %d\n", ret);
+	return ret;
 }
 
 /**

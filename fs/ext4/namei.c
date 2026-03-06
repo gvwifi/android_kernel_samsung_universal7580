@@ -276,7 +276,7 @@ static struct buffer_head * ext4_dx_find_entry(struct inode *dir,
 		struct ext4_dir_entry_2 **res_dir,
 		int *err);
 static int ext4_dx_add_entry(handle_t *handle, struct dentry *dentry,
-			     struct inode *inode);
+			     struct inode *inode, struct ext4_filename *fname);
 
 /* checksumming functions */
 void initialize_dirent_tail(struct ext4_dir_entry_tail *t,
@@ -1268,11 +1268,12 @@ static int is_dx_internal_node(struct inode *dir, ext4_lblk_t block,
 static struct buffer_head * ext4_find_entry (struct inode *dir,
 					const struct qstr *d_name,
 					struct ext4_dir_entry_2 **res_dir,
-#ifdef CONFIG_SDCARD_FS_CI_SEARCH
+					struct ext4_filename *fname,
 					int *inlined,
+#ifdef CONFIG_SDCARD_FS_CI_SEARCH
 					char *ci_name_buf)
 #else
-					int *inlined)
+					void *unused)
 #endif
 {
 	struct super_block *sb;
@@ -1280,20 +1281,28 @@ static struct buffer_head * ext4_find_entry (struct inode *dir,
 	struct buffer_head *bh, *ret = NULL;
 	ext4_lblk_t start, block, b;
 	const u8 *name = d_name->name;
-	int ra_max = 0;		/* Number of bh's in the readahead
-				   buffer, bh_use[] */
-	int ra_ptr = 0;		/* Current index into readahead
-				   buffer */
+	int ra_max = 0;		/* Number of buffers in bh_use[] */
+	int ra_ptr = 0;		/* Current index into bh_use[] */
 	int num = 0;
 	ext4_lblk_t  nblocks;
 	int i, err;
 	int namelen;
+	struct ext4_filename fname_crypto;
 
 	*res_dir = NULL;
 	sb = dir->i_sb;
 	namelen = d_name->len;
 	if (namelen > EXT4_NAME_LEN)
 		return NULL;
+
+	if (fname)
+		fname_crypto = *fname;
+	else {
+		memset(&fname_crypto, 0, sizeof(fname_crypto));
+		err = ext4_fname_setup_filename(dir, d_name, 1, &fname_crypto);
+		if (err)
+			return ERR_PTR(err);
+	}
 
 	if (ext4_has_inline_data(dir)) {
 		int has_inline_data = 1;
@@ -1302,31 +1311,27 @@ static struct buffer_head * ext4_find_entry (struct inode *dir,
 		if (has_inline_data) {
 			if (inlined)
 				*inlined = 1;
+			/* If inline data was found, no need for fname_crypto cleanup */
+			if (fname_crypto.usr_fname->name != fname_crypto.disk_name.name)
+				ext4_fname_free_filename(&fname_crypto);
 			return ret;
 		}
 	}
 
-	if ((namelen <= 2) && (name[0] == '.') &&
-	    (name[1] == '.' || name[1] == '\0')) {
-		/*
-		 * "." or ".." will only be in the first block
-		 * NFS may look up ".."; "." should be handled by the VFS
-		 */
-		block = start = 0;
-		nblocks = 1;
-		goto restart;
-	}
-	if (is_dx(dir)) {
-		bh = ext4_dx_find_entry(dir, d_name, res_dir, &err);
-		/*
-		 * On success, or if the error was file not found,
-		 * return.  Otherwise, fall back to doing a search the
-		 * old fashioned way.
-		 */
-		if (bh || (err != ERR_BAD_DX_DIR))
-			return bh;
-		dxtrace(printk(KERN_DEBUG "ext4_find_entry: dx failed, "
-			       "falling back\n"));
+	if (namelen > 2 || name[0] != '.' ||
+	    (namelen == 2 && name[1] != '.')) {
+		if (is_dx(dir)) {
+			bh = ext4_dx_find_entry(dir, d_name, res_dir, &err);
+			/*
+			 * On success, or if the error was file not found,
+			 * return.  Otherwise, fall back to doing a search the
+			 * old fashioned way.
+			 */
+			if (bh || (err != ERR_BAD_DX_DIR))
+				return bh;
+			dxtrace(printk(KERN_DEBUG "ext4_find_entry: dx failed, "
+				       "falling back\n"));
+		}
 	}
 	nblocks = dir->i_size >> EXT4_BLOCK_SIZE_BITS(sb);
 	start = EXT4_I(dir)->i_dir_start_lookup;
@@ -1418,6 +1423,12 @@ cleanup_and_exit:
 	/* Clean up the read-ahead blocks */
 	for (; ra_ptr < ra_max; ra_ptr++)
 		brelse(bh_use[ra_ptr]);
+	/* Clean up the read-ahead blocks */
+	for (; ra_ptr < ra_max; ra_ptr++)
+		brelse(bh_use[ra_ptr]);
+	
+	if (!fname && fname_crypto.usr_fname->name != fname_crypto.disk_name.name)
+		ext4_fname_free_filename(&fname_crypto);
 	return ret;
 }
 
@@ -1494,12 +1505,14 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, unsi
 #ifdef CONFIG_SDCARD_FS_CI_SEARCH
 	ci_name_buf[0] = '\0';
 	if (flags & LOOKUP_CASE_INSENSITIVE)
-		bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL, ci_name_buf);
+		bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL, NULL, ci_name_buf);
 	else
-		bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL, NULL);
+		bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL, NULL, NULL);
 #else
-	bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL);
+	bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL, NULL, NULL);
 #endif
+	if (IS_ERR(bh))
+		return ERR_CAST(bh);
 	inode = NULL;
 	if (bh) {
 		__u32 ino = le32_to_cpu(de->inode);
@@ -1550,10 +1563,12 @@ struct dentry *ext4_get_parent(struct dentry *child)
 	struct buffer_head *bh;
 
 #ifdef CONFIG_SDCARD_FS_CI_SEARCH
-	bh = ext4_find_entry(child->d_inode, &dotdot, &de, NULL, NULL);
+	bh = ext4_find_entry(child->d_inode, &dotdot, &de, NULL, NULL, NULL);
 #else
-	bh = ext4_find_entry(child->d_inode, &dotdot, &de, NULL);
+	bh = ext4_find_entry(child->d_inode, &dotdot, &de, NULL, NULL, NULL);
 #endif
+	if (IS_ERR(bh))
+		return ERR_CAST(bh);
 	if (!bh)
 		return ERR_PTR(-ENOENT);
 	ino = le32_to_cpu(de->inode);
@@ -1800,7 +1815,7 @@ void ext4_insert_dentry(struct inode *inode,
  */
 static int add_dirent_to_buf(handle_t *handle, struct dentry *dentry,
 			     struct inode *inode, struct ext4_dir_entry_2 *de,
-			     struct buffer_head *bh)
+			     struct buffer_head *bh, struct ext4_filename *fname)
 {
 	struct inode	*dir = dentry->d_parent->d_inode;
 	const char	*name = dentry->d_name.name;
@@ -1828,6 +1843,10 @@ static int add_dirent_to_buf(handle_t *handle, struct dentry *dentry,
 	}
 
 	/* By now the buffer is marked for journaling */
+	if (fname && fname->disk_name.name) {
+		name = fname->disk_name.name;
+		namelen = fname->disk_name.len;
+	}
 	ext4_insert_dentry(inode, de, blocksize, name, namelen);
 
 	/*
@@ -1857,7 +1876,8 @@ static int add_dirent_to_buf(handle_t *handle, struct dentry *dentry,
  * directory, and adds the dentry to the indexed directory.
  */
 static int make_indexed_dir(handle_t *handle, struct dentry *dentry,
-			    struct inode *inode, struct buffer_head *bh)
+			    struct inode *inode, struct buffer_head *bh,
+			    struct ext4_filename *fname)
 {
 	struct inode	*dir = dentry->d_parent->d_inode;
 	const char	*name = dentry->d_name.name;
@@ -1965,7 +1985,7 @@ static int make_indexed_dir(handle_t *handle, struct dentry *dentry,
 	}
 	dx_release(frames);
 
-	retval = add_dirent_to_buf(handle, dentry, inode, de, bh);
+	retval = add_dirent_to_buf(handle, dentry, inode, de, bh, fname);
 	brelse(bh);
 	return retval;
 }
@@ -1993,6 +2013,8 @@ static int ext4_add_entry(handle_t *handle, struct dentry *dentry,
 	unsigned blocksize;
 	ext4_lblk_t block, blocks;
 	int	csum_size = 0;
+	struct ext4_filename fname_crypto;
+	struct ext4_filename *fname = NULL;
 
 	if (EXT4_HAS_RO_COMPAT_FEATURE(inode->i_sb,
 				       EXT4_FEATURE_RO_COMPAT_METADATA_CSUM))
@@ -2003,10 +2025,16 @@ static int ext4_add_entry(handle_t *handle, struct dentry *dentry,
 	if (!dentry->d_name.len)
 		return -EINVAL;
 
+	retval = ext4_fname_setup_filename(dir, &dentry->d_name, 0, &fname_crypto);
+	if (retval)
+		return retval;
+	if (fname_crypto.disk_name.name)
+		fname = &fname_crypto;
+
 	if (ext4_has_inline_data(dir)) {
 		retval = ext4_try_add_inline_entry(handle, dentry, inode);
 		if (retval < 0)
-			return retval;
+			goto out;
 		if (retval == 1) {
 			retval = 0;
 			goto out;
@@ -2014,7 +2042,7 @@ static int ext4_add_entry(handle_t *handle, struct dentry *dentry,
 	}
 
 	if (is_dx(dir)) {
-		retval = ext4_dx_add_entry(handle, dentry, inode);
+		retval = ext4_dx_add_entry(handle, dentry, inode, fname);
 		if (!retval || (retval != ERR_BAD_DX_DIR))
 			goto out;
 		ext4_clear_inode_flag(dir, EXT4_INODE_INDEX);
@@ -2024,24 +2052,28 @@ static int ext4_add_entry(handle_t *handle, struct dentry *dentry,
 	blocks = dir->i_size >> sb->s_blocksize_bits;
 	for (block = 0; block < blocks; block++) {
 		bh = ext4_read_dirblock(dir, block, DIRENT);
-		if (IS_ERR(bh))
-			return PTR_ERR(bh);
+		if (IS_ERR(bh)) {
+			retval = PTR_ERR(bh);
+			goto out;
+		}
 
-		retval = add_dirent_to_buf(handle, dentry, inode, NULL, bh);
+		retval = add_dirent_to_buf(handle, dentry, inode, NULL, bh, fname);
 		if (retval != -ENOSPC)
 			goto out;
 
 		if (blocks == 1 && !dx_fallback &&
 		    EXT4_HAS_COMPAT_FEATURE(sb, EXT4_FEATURE_COMPAT_DIR_INDEX)) {
-			retval = make_indexed_dir(handle, dentry, inode, bh);
+			retval = make_indexed_dir(handle, dentry, inode, bh, fname);
 			bh = NULL; /* make_indexed_dir releases bh */
 			goto out;
 		}
 		brelse(bh);
 	}
 	bh = ext4_append(handle, dir, &block);
-	if (IS_ERR(bh))
-		return PTR_ERR(bh);
+	if (IS_ERR(bh)) {
+		retval = PTR_ERR(bh);
+		goto out;
+	}
 	de = (struct ext4_dir_entry_2 *) bh->b_data;
 	de->inode = 0;
 	de->rec_len = ext4_rec_len_to_disk(blocksize - csum_size, blocksize);
@@ -2051,8 +2083,10 @@ static int ext4_add_entry(handle_t *handle, struct dentry *dentry,
 		initialize_dirent_tail(t, blocksize);
 	}
 
-	retval = add_dirent_to_buf(handle, dentry, inode, de, bh);
+	retval = add_dirent_to_buf(handle, dentry, inode, de, bh, fname);
 out:
+	if (fname && fname->usr_fname->name != fname->disk_name.name)
+		ext4_fname_free_filename(fname);
 	brelse(bh);
 	if (retval == 0)
 		ext4_set_inode_state(inode, EXT4_STATE_NEWENTRY);
@@ -2063,7 +2097,7 @@ out:
  * Returns 0 for success, or a negative error value
  */
 static int ext4_dx_add_entry(handle_t *handle, struct dentry *dentry,
-			     struct inode *inode)
+			     struct inode *inode, struct ext4_filename *fname)
 {
 	struct dx_frame frames[2], *frame;
 	struct dx_entry *entries, *at;
@@ -2091,7 +2125,7 @@ static int ext4_dx_add_entry(handle_t *handle, struct dentry *dentry,
 	if (err)
 		goto journal_error;
 
-	err = add_dirent_to_buf(handle, dentry, inode, NULL, bh);
+	err = add_dirent_to_buf(handle, dentry, inode, NULL, bh, fname);
 	if (err != -ENOSPC)
 		goto cleanup;
 
@@ -2190,7 +2224,7 @@ static int ext4_dx_add_entry(handle_t *handle, struct dentry *dentry,
 	de = do_split(handle, dir, &bh, frame, &hinfo, &err);
 	if (!de)
 		goto cleanup;
-	err = add_dirent_to_buf(handle, dentry, inode, de, bh);
+	err = add_dirent_to_buf(handle, dentry, inode, de, bh, fname);
 	goto cleanup;
 
 journal_error:
@@ -2538,7 +2572,7 @@ out_stop:
 /*
  * routine to check that the specified directory is empty (for rmdir)
  */
-static int empty_dir(struct inode *inode)
+int ext4_empty_dir(struct inode *inode)
 {
 	unsigned int offset;
 	struct buffer_head *bh;
@@ -2776,10 +2810,15 @@ static int ext4_rmdir(struct inode *dir, struct dentry *dentry)
 
 	retval = -ENOENT;
 #ifdef CONFIG_SDCARD_FS_CI_SEARCH
-	bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL, NULL);
+	bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL, NULL, NULL);
 #else
-	bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL);
+	bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL, NULL, NULL);
 #endif
+	if (IS_ERR(bh)) {
+		retval = PTR_ERR(bh);
+		bh = NULL;
+		goto end_rmdir;
+	}
 	if (!bh)
 		goto end_rmdir;
 
@@ -2790,7 +2829,7 @@ static int ext4_rmdir(struct inode *dir, struct dentry *dentry)
 		goto end_rmdir;
 
 	retval = -ENOTEMPTY;
-	if (!empty_dir(inode))
+	if (!ext4_empty_dir(inode))
 		goto end_rmdir;
 
 	handle = ext4_journal_start(dir, EXT4_HT_DIR,
@@ -2847,10 +2886,15 @@ static int ext4_unlink(struct inode *dir, struct dentry *dentry)
 
 	retval = -ENOENT;
 #ifdef CONFIG_SDCARD_FS_CI_SEARCH
-	bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL, NULL);
+	bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL, NULL, NULL);
 #else
-	bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL);
+	bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL, NULL, NULL);
 #endif
+	if (IS_ERR(bh)) {
+		retval = PTR_ERR(bh);
+		bh = NULL;
+		goto end_unlink;
+	}
 	if (!bh)
 		goto end_unlink;
 
@@ -2890,8 +2934,8 @@ static int ext4_unlink(struct inode *dir, struct dentry *dentry)
 	/* log unlinker's uid or first 4 bytes of comm 
 	 * to ext4_inode->i_version_hi */
 	inode->i_version &= 0x00000000FFFFFFFF;
-	if(current_uid()) {
-		inode->i_version |= (u64)current_uid() << 32;
+	if(!uid_eq(current_uid(), GLOBAL_ROOT_UID)) {
+		inode->i_version |= (u64)from_kuid(&init_user_ns, current_uid()) << 32;
 	} else {
 		u32 *comm = (u32 *)current->comm;
 		inode->i_version |= (u64)(*comm) << 32;
@@ -3116,10 +3160,15 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 		ext4_handle_sync(handle);
 
 #ifdef CONFIG_SDCARD_FS_CI_SEARCH
-	old_bh = ext4_find_entry(old_dir, &old_dentry->d_name, &old_de, NULL, NULL);
+	old_bh = ext4_find_entry(old_dir, &old_dentry->d_name, &old_de, NULL, NULL, NULL);
 #else
-	old_bh = ext4_find_entry(old_dir, &old_dentry->d_name, &old_de, NULL);
+	old_bh = ext4_find_entry(old_dir, &old_dentry->d_name, &old_de, NULL, NULL, NULL);
 #endif
+	if (IS_ERR(old_bh)) {
+		retval = PTR_ERR(old_bh);
+		old_bh = NULL;
+		goto end_rename;
+	}
 	/*
 	 *  Check for inode number is _not_ due to possible IO errors.
 	 *  We might rmdir the source, keep it as pwd of some process
@@ -3134,11 +3183,16 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 	new_inode = new_dentry->d_inode;
 #ifdef CONFIG_SDCARD_FS_CI_SEARCH
 	new_bh = ext4_find_entry(new_dir, &new_dentry->d_name,
-				 &new_de, &new_inlined, NULL);
+				 &new_de, NULL, &new_inlined, NULL);
 #else
 	new_bh = ext4_find_entry(new_dir, &new_dentry->d_name,
-				 &new_de, &new_inlined);
+				 &new_de, NULL, &new_inlined, NULL);
 #endif
+	if (IS_ERR(new_bh)) {
+		retval = PTR_ERR(new_bh);
+		new_bh = NULL;
+		goto end_rename;
+	}
 	if (new_bh) {
 		if (!new_inode) {
 			brelse(new_bh);
@@ -3148,7 +3202,7 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 	if (S_ISDIR(old_inode->i_mode)) {
 		if (new_inode) {
 			retval = -ENOTEMPTY;
-			if (!empty_dir(new_inode))
+			if (!ext4_empty_dir(new_inode))
 				goto end_rename;
 		}
 		retval = -EIO;
@@ -3222,11 +3276,15 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 
 #ifdef CONFIG_SDCARD_FS_CI_SEARCH
 		old_bh2 = ext4_find_entry(old_dir, &old_dentry->d_name,
-					  &old_de2, NULL, NULL);
+					  &old_de2, NULL, NULL, NULL);
 #else
 		old_bh2 = ext4_find_entry(old_dir, &old_dentry->d_name,
-					  &old_de2, NULL);
+					  &old_de2, NULL, NULL, NULL);
 #endif
+		if (IS_ERR(old_bh2)) {
+			retval = PTR_ERR(old_bh2);
+			old_bh2 = NULL;
+		}
 		if (old_bh2) {
 			retval = ext4_delete_entry(handle, old_dir,
 						   old_de2, old_bh2);

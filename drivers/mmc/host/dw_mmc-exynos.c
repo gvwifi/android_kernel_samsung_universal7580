@@ -37,6 +37,8 @@
 struct dw_mci *dw_mci_lpa_host[3] = {0, 0, 0};
 unsigned int dw_mci_host_count;
 unsigned int dw_mci_save_sfr[3][30];
+static bool dw_mci_lpa_ciu_was_on[3];
+static bool dw_mci_lpa_biu_was_on[3];
 
 extern void dw_mci_ciu_reset(struct device *dev, struct dw_mci *host);
 extern bool dw_mci_fifo_reset(struct device *dev, struct dw_mci *host);
@@ -213,6 +215,9 @@ static void exynos_sfr_save(unsigned int i)
 {
 	struct dw_mci *host = dw_mci_lpa_host[i];
 
+	dw_mci_lpa_ciu_was_on[i] = (atomic_read(&host->ciu_clk_cnt) > 0);
+	dw_mci_lpa_biu_was_on[i] = (atomic_read(&host->biu_clk_cnt) > 0);
+
 	if (host->pdata->use_biu_gate_clock)
 		atomic_inc_return(&host->biu_en_win);
 
@@ -353,8 +358,10 @@ static void exynos_sfr_restore(unsigned int i)
 	/* For unuse clock gating */
 	if (host->pdata->enable_cclk_on_suspend) {
 		host->pdata->on_suspend = false;
-		dw_mci_ciu_clk_dis(host);
-		dw_mci_biu_clk_dis(host);
+		if (!dw_mci_lpa_ciu_was_on[i])
+			dw_mci_ciu_clk_dis(host);
+		if (!dw_mci_lpa_biu_was_on[i])
+			dw_mci_biu_clk_dis(host);
 	}
 
 	if (startbit_clear == false)

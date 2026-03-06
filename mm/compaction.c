@@ -16,6 +16,7 @@
 #include <linux/sysfs.h>
 #include <linux/balloon_compaction.h>
 #include <linux/page-isolation.h>
+#include <linux/psi.h>
 #ifdef CONFIG_POWERSUSPEND
 #include <linux/powersuspend.h>
 #endif

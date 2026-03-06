@@ -194,7 +194,7 @@ SUBARCH := $(shell uname -m | sed -e s/i.86/x86/ -e s/x86_64/x86/ \
 # Note: Some architectures assign CROSS_COMPILE in their arch/*/Makefile
 export KBUILD_BUILDHOST := $(SUBARCH)
 ARCH		?=arm64
-CROSS_COMPILE	?=/android/RR/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+CROSS_COMPILE	?=/home/parasetam0l/lineageos/prebuilts/gcc/linux-aarch64/aarch64/aarch64-linux-gnu-4.9/bin/aarch64-linux-gnu-
 #CROSS_COMPILE   ?=/home/alexax/build/toolchain/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-
 
 # Architecture as present in compile.h
@@ -386,9 +386,73 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 
 KBUILD_CFLAGS   += -mcpu=cortex-a53
 
+ifneq ($(CLANG_TRIPLE),)
+CLANG_FLAGS	:= --target=$(patsubst %-,%,$(CLANG_TRIPLE)) \
+		   -no-integrated-as \
+		   -Wno-unknown-warning-option \
+		   -Wno-asm-operand-widths \
+		   -Wno-initializer-overrides \
+		   -Wno-sometimes-uninitialized \
+		   -Wno-uninitialized \
+		   -Wno-tautological-compare \
+		   -Wno-tautological-constant-out-of-range-compare \
+		   -Wno-gnu-variable-sized-type-not-at-end \
+		   -Wno-format-invalid-specifier \
+		   -Wno-unused-function \
+		   -Wno-unused-const-variable \
+		   -Wno-unused-variable \
+		   -Wno-strict-prototypes \
+		   -Wno-pointer-sign \
+		   -Wno-pointer-bool-conversion \
+		   -Wno-void-pointer-to-enum-cast \
+		   -Wno-format \
+		   -Wno-ignored-attributes \
+		   -Wno-logical-not-parentheses \
+		   -Wno-section \
+		   -Wno-address-of-packed-member \
+		   -Wno-frame-larger-than \
+		   -Wno-enum-conversion \
+		   -Wno-int-in-bool-context \
+		   -Wno-incompatible-pointer-types \
+		   -Wno-typedef-redefinition \
+		   -Wno-constant-logical-operand \
+		   -Wno-parentheses-equality \
+		   -Wno-implicit-int-float-conversion \
+		   -Wno-string-plus-int \
+		   -Wno-absolute-value \
+		   -Wno-bitwise-op-parentheses \
+		   -Wno-shift-count-overflow \
+		   -Wno-misleading-indentation \
+		   -Wno-visibility \
+		   -Wno-implicit-fallthrough \
+		   -Wno-duplicate-decl-specifier \
+		   -Wno-int-conversion \
+		   -Wno-enum-enum-conversion \
+		   -Wno-array-parameter \
+		   -Wno-implicit-function-declaration \
+		   -Wno-return-type \
+		   -Wno-bool-operation \
+		   -Wno-sizeof-array-div \
+		   -Wno-empty-body \
+		   -Wno-shift-negative-value \
+		   -Wno-literal-conversion \
+		   -Wno-dangling-else \
+		   -Wno-ordered-compare-function-pointers \
+		   -Wno-tautological-pointer-compare \
+		   -Wno-expansion-to-defined \
+		   -Wno-tentative-definition-array \
+		   -Qunused-arguments
+# Force DWARF v4 to avoid DWARF v5 .file 0 directives that old GNU as rejects
+KBUILD_CFLAGS	+= $(CLANG_FLAGS) -gdwarf-4
+endif
+
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
 KBUILD_AFLAGS   := -D__ASSEMBLY__
+
+ifneq ($(CLANG_TRIPLE),)
+KBUILD_AFLAGS	+= $(CLANG_FLAGS)
+endif
 KBUILD_AFLAGS_MODULE  := -DMODULE
 KBUILD_CFLAGS_MODULE  := -DMODULE
 KBUILD_LDFLAGS_MODULE := -T $(srctree)/scripts/module-common.lds

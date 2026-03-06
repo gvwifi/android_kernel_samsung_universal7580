@@ -185,6 +185,9 @@ static void sec_reboot(char str, const char *cmd)
 			       EXYNOS_PMU_INFORM3);
 		else if (!strncmp(cmd, "emergency", 9))
 			writel(0, EXYNOS_PMU_INFORM3);
+		else if (!strcmp(cmd, "bpfloader-failed"))
+			writel(REBOOT_MODE_PREFIX | REBOOT_MODE_RECOVERY,
+			       EXYNOS_PMU_INFORM3);
 		else
 			writel(REBOOT_MODE_PREFIX | REBOOT_MODE_NONE,
 			       EXYNOS_PMU_INFORM3);

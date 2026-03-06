@@ -133,7 +133,8 @@ static void dump_instr(const char *lvl, struct pt_regs *regs)
 static void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 {
 	struct stackframe frame;
-	const register unsigned long current_sp asm ("sp");
+	unsigned long current_sp;
+	asm volatile("mov %0, sp" : "=r" (current_sp));
 
 	pr_debug("%s(regs = %p tsk = %p)\n", __func__, regs, tsk);
 

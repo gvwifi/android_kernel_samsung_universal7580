@@ -979,6 +979,7 @@ static int i2s_trigger(struct snd_pcm_substream *substream,
 	int capture = (substream->stream == SNDRV_PCM_STREAM_CAPTURE);
 	struct i2s_dai *i2s = to_info(dai);
 	unsigned long flags;
+	int ret;
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
@@ -986,8 +987,10 @@ static int i2s_trigger(struct snd_pcm_substream *substream,
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
 		local_irq_save(flags);
 
-		if (config_setup(i2s)) {
+		ret = config_setup(i2s);
+		if (ret) {
 			local_irq_restore(flags);
+			printk(KERN_ERR "dbg: i2s_trigger config_setup failed with %d\n", ret);
 			return -EINVAL;
 		}
 

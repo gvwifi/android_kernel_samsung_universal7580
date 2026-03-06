@@ -1002,6 +1002,48 @@ static void zoneinfo_show_print(struct seq_file *m, pg_data_t *pgdat,
 {
 	int i;
 	seq_printf(m, "Node %d, zone %8s", pgdat->node_id, zone->name);
+
+	/*
+	 * Android 16's lmkd expects a "  per-node stats" section before the
+	 * per-zone page counts on the FIRST populated zone of each node.
+	 * In this kernel (3.10) nr_inactive_file/nr_active_file are per-zone
+	 * stats; we sum them across all zones of this node to produce the
+	 * per-node aggregates that lmkd needs.
+	 */
+	{
+		struct zone *z;
+		bool is_first_populated = true;
+
+		for (z = pgdat->node_zones; z != zone; z++) {
+			if (populated_zone(z)) {
+				is_first_populated = false;
+				break;
+			}
+		}
+
+		if (is_first_populated) {
+			unsigned long nr_inactive_file = 0;
+			unsigned long nr_active_file = 0;
+
+			for (z = pgdat->node_zones;
+			     z - pgdat->node_zones < MAX_NR_ZONES; z++) {
+				if (populated_zone(z)) {
+					nr_inactive_file +=
+						zone_page_state(z, NR_INACTIVE_FILE);
+					nr_active_file +=
+						zone_page_state(z, NR_ACTIVE_FILE);
+				}
+			}
+
+			seq_printf(m,
+				   "\n  per-node stats"
+				   "\n      nr_inactive_file %lu"
+				   "\n      nr_active_file %lu",
+				   nr_inactive_file,
+				   nr_active_file);
+		}
+	}
+
 	seq_printf(m,
 		   "\n  pages free     %lu"
 		   "\n        min      %lu"

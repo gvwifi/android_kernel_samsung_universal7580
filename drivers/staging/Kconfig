@@ -72,7 +72,7 @@ source "drivers/staging/sep/Kconfig"
 
 source "drivers/staging/iio/Kconfig"
 
-source "drivers/staging/zram/Kconfig"
+# staging/zram replaced by drivers/block/zram (modern driver with comp_algorithm)
 
 source "drivers/staging/wlags49_h2/Kconfig"
 

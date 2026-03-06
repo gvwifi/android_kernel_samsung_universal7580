@@ -145,6 +145,10 @@ extern unsigned int kobjsize(const void *objp);
 /* Bits set in the VMA until the stack is in its final location */
 #define VM_STACK_INCOMPLETE_SETUP	(VM_RAND_READ | VM_SEQ_READ)
 
+#define VM_UFFD_MISSING	0x00000200	/* UFFD missing tracking */
+#define VM_UFFD_WP	0x00001000	/* UFFD write-protection tracking */
+#define VM_UFFD_MINOR	0x00080000	/* UFFD minor fault tracking */
+
 #ifndef VM_STACK_DEFAULT_FLAGS		/* arch can override this */
 #define VM_STACK_DEFAULT_FLAGS VM_DATA_DEFAULT_FLAGS
 #endif

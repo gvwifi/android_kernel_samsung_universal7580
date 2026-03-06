@@ -220,6 +220,9 @@ struct sock_common {
 };
 
 struct cg_proto;
+struct sock_cgroup_data {
+	struct cgroup *cgroup;
+};
 /**
   *	struct sock - network layer representation of sockets
   *	@__sk_common: shared layout with inet_timewait_sock
@@ -412,6 +415,11 @@ struct sock {
 	int			(*sk_backlog_rcv)(struct sock *sk,
 						  struct sk_buff *skb);
 	void                    (*sk_destruct)(struct sock *sk);
+#ifdef CONFIG_CGROUP_BPF
+	struct sock_cgroup_data	sk_cgrp_data;
+#endif
+	/* Backported from Linux 4.13: per-socket cookie for SO_COOKIE */
+	atomic64_t		sk_cookie;
 };
 
 /*

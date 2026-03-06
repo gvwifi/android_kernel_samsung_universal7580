@@ -1,0 +1,28 @@
+menu "BPF subsystem"
+
+config BPF
+	bool "Enable BPF (Berkeley Packet Filter)"
+	default y
+	help
+	  BPF is a general-purpose RISC instruction set for
+	  defining signal handlers, system calls, and other
+	  kernel-space programs.
+
+config BPF_SYSCALL
+	bool "Enable bpf() system call"
+	depends on BPF
+	select ANON_INODES
+	default y
+	help
+	  Enable the bpf() system call that allows to manipulate BPF maps and
+	  programs via syscall interface.
+
+config BPF_JIT_ALWAYS_ON
+	bool "Permanently enable BPF JIT and remove BPF interpreter"
+	depends on BPF_SYSCALL && EXPERT
+	default n
+	help
+	  Enables BPF JIT and removes BPF interpreter to avoid
+	  speculative execution of BPF instructions by the interpreter
+
+endmenu

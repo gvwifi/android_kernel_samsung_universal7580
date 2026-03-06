@@ -20,6 +20,8 @@
 #include <linux/workqueue.h>
 #include <linux/xattr.h>
 #include <linux/fs.h>
+#include <linux/psi_types.h>
+#include <linux/bpf-cgroup.h>
 
 #ifdef CONFIG_CGROUPS
 
@@ -239,6 +241,14 @@ struct cgroup {
 
 	/* directory xattrs */
 	struct simple_xattrs xattrs;
+
+#ifdef CONFIG_CGROUP_BPF
+	struct cgroup_bpf bpf;
+#endif
+
+#ifdef CONFIG_PSI
+	struct psi_group psi;
+#endif
 };
 
 #define MAX_CGROUP_ROOT_NAMELEN 64
@@ -278,9 +288,12 @@ enum {
 	 *   mechanism is implemented.
 	 */
 	CGRP_ROOT_SANE_BEHAVIOR	= (1 << 0),
+	CGRP_ROOT_UNIFIED = CGRP_ROOT_SANE_BEHAVIOR, /* Cgroup v2 Unified Hierarchy */
 
 	CGRP_ROOT_NOPREFIX	= (1 << 1), /* mounted subsystems have no named prefix */
 	CGRP_ROOT_XATTR		= (1 << 2), /* supports extended attributes */
+	CGRP_ROOT_MEMORY_LOCAL_EVENTS = (1 << 3),
+	CGRP_ROOT_CPUSET_V2_MODE = (1 << 4), /* cpuset v2 mode for CPU hotplug */
 };
 
 /*
@@ -397,6 +410,7 @@ struct cgroup_map_cb {
 #define CFTYPE_ONLY_ON_ROOT	(1U << 0)	/* only create on root cg */
 #define CFTYPE_NOT_ON_ROOT	(1U << 1)	/* don't create on root cg */
 #define CFTYPE_INSANE		(1U << 2)	/* don't create if sane_behavior */
+#define CFTYPE_SANE		(1U << 3)	/* only create if sane_behavior */
 
 #define MAX_CFTYPE_NAME		64
 
@@ -542,8 +556,20 @@ int cgroup_is_removed(const struct cgroup *cgrp);
 bool cgroup_is_descendant(struct cgroup *cgrp, struct cgroup *ancestor);
 
 int cgroup_path(const struct cgroup *cgrp, char *buf, int buflen);
+struct cgroup *cgroup_get_from_path(const char *path);
+struct cgroup *cgroup_get_from_fd(int fd);
+void cgroup_put(struct cgroup *cgrp);
 
 int cgroup_task_count(const struct cgroup *cgrp);
+
+static inline struct psi_group *cgroup_psi(struct cgroup *cgrp)
+{
+#ifdef CONFIG_PSI
+	return &cgrp->psi;
+#else
+	return NULL;
+#endif
+}
 
 /*
  * Control Group taskset, used to pass around set of tasks to cgroup_subsys
@@ -660,8 +686,8 @@ static inline struct cgroup_subsys_state *cgroup_subsys_state(
  * The caller can also specify additional allowed conditions via @__c, such
  * as locks used during the cgroup_subsys::attach() methods.
  */
-#ifdef CONFIG_PROVE_RCU
 extern struct mutex cgroup_mutex;
+#ifdef CONFIG_PROVE_RCU
 #define task_css_set_check(task, __c)					\
 	rcu_dereference_check((task)->cgroups,				\
 		lockdep_is_held(&(task)->alloc_lock) ||			\

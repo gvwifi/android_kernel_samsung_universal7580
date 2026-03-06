@@ -1729,7 +1729,9 @@ static ssize_t show_cmd_result(struct device *dev, struct device_attribute
 
 	int i=0;
 	char buff[32] = { 0 };
-	char all_strbuff[TSP_CMD_RESULT_STR_LEN] = { 0 };
+	static char all_strbuff[TSP_CMD_RESULT_STR_LEN];
+
+	memset(all_strbuff, 0, sizeof(all_strbuff));
 
 	/* Support long return val  command */
 	if (fdata->long_cmd_ret_val) {
@@ -1794,15 +1796,15 @@ static ssize_t cmd_list_show(struct device *dev,
 {
 	int ii = 0;
 	char buffer_name[TSP_CMD_STR_LEN] = {0,};
-	char debug_buffer[TSP_CMD_RESULT_STR_LEN];
+	static char debug_buffer[TSP_CMD_RESULT_STR_LEN];
 
 	memset(debug_buffer, 0, TSP_CMD_RESULT_STR_LEN);
 
-	snprintf(buffer_name, TSP_CMD_RESULT_STR_LEN, "++factory command list++\n");
+	snprintf(buffer_name, TSP_CMD_STR_LEN, "++factory command list++\n");
 	strcat(debug_buffer, buffer_name);
 
 	while (strncmp(tsp_cmds[ii].cmd_name, "not_support_cmd", 16) != 0) {
-		snprintf(buffer_name, TSP_CMD_RESULT_STR_LEN, "%s\n", tsp_cmds[ii].cmd_name);
+		snprintf(buffer_name, TSP_CMD_STR_LEN, "%s\n", tsp_cmds[ii].cmd_name);
 		strcat(debug_buffer, buffer_name);
 		ii++;
 	}

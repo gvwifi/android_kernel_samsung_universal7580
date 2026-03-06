@@ -1,0 +1,155 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+#ifndef _BPF_CGROUP_H
+#define _BPF_CGROUP_H
+
+#include <linux/jump_label.h>
+#include <uapi/linux/bpf.h>
+
+struct sock;
+struct cgroup;
+struct sk_buff;
+struct bpf_sock_ops_kern;
+struct sock_cgroup_data;
+
+#ifdef CONFIG_CGROUP_BPF
+
+extern struct static_key cgroup_bpf_enabled_key;
+#define cgroup_bpf_enabled static_key_false(&cgroup_bpf_enabled_key)
+
+/*
+ * Compatibility stubs for older kernels (< 4.x)
+ * sk_to_full_sk() converts a request sock to its parent full sock
+ * sk_fullsock() checks if sock is a full socket (not a request sock)
+ * In 3.10, we don't have request sockets in these paths.
+ * Simplified: just check for non-NULL sock.
+ */
+#ifndef sk_to_full_sk
+static inline struct sock *sk_to_full_sk(struct sock *sk)
+{
+	return sk;
+}
+#endif
+
+#ifndef sk_fullsock
+static inline int sk_fullsock(struct sock *sk)
+{
+	return sk != NULL;
+}
+#endif
+
+struct bpf_prog_list {
+	struct list_head node;
+	struct bpf_prog *prog;
+};
+
+struct bpf_prog_array;
+
+struct cgroup_bpf {
+	/* array of effective progs in this cgroup */
+	struct bpf_prog_array __rcu *effective[MAX_BPF_ATTACH_TYPE];
+
+	/* attached progs to this cgroup and attach flags
+	 * when flags == 0 or BPF_F_ALLOW_OVERRIDE the progs list will
+	 * have either zero or one element
+	 * when BPF_F_ALLOW_MULTI the list can have up to BPF_CGROUP_MAX_PROGS
+	 */
+	struct list_head progs[MAX_BPF_ATTACH_TYPE];
+	u32 flags[MAX_BPF_ATTACH_TYPE];
+
+	/* temp storage for effective prog array used by prog_attach/detach */
+	struct bpf_prog_array __rcu *inactive;
+};
+
+void cgroup_sk_alloc(struct sock_cgroup_data *skcd);
+void cgroup_sk_free(struct sock_cgroup_data *skcd);
+
+void cgroup_bpf_put(struct cgroup *cgrp);
+int cgroup_bpf_inherit(struct cgroup *cgrp);
+
+int __cgroup_bpf_attach(struct cgroup *cgrp, struct bpf_prog *prog,
+			enum bpf_attach_type type, u32 flags);
+int __cgroup_bpf_detach(struct cgroup *cgrp, struct bpf_prog *prog,
+			enum bpf_attach_type type, u32 flags);
+int __cgroup_bpf_query(struct cgroup *cgrp, const union bpf_attr *attr,
+		       union bpf_attr __user *uattr);
+
+/* Wrapper for __cgroup_bpf_*() protected by cgroup_mutex */
+int cgroup_bpf_attach(struct cgroup *cgrp, struct bpf_prog *prog,
+		      enum bpf_attach_type type, u32 flags);
+int cgroup_bpf_detach(struct cgroup *cgrp, struct bpf_prog *prog,
+		      enum bpf_attach_type type, u32 flags);
+int cgroup_bpf_prog_query(const union bpf_attr *attr,
+			  union bpf_attr __user *uattr);
+
+int __cgroup_bpf_run_filter_skb(struct sock *sk,
+				struct sk_buff *skb,
+				enum bpf_attach_type type);
+
+int __cgroup_bpf_run_filter_sk(struct sock *sk,
+			       enum bpf_attach_type type);
+
+int __cgroup_bpf_run_filter_sock_ops(struct sock *sk,
+				     struct bpf_sock_ops_kern *sock_ops,
+				     enum bpf_attach_type type);
+
+/* Wrappers for __cgroup_bpf_run_filter_skb() guarded by cgroup_bpf_enabled. */
+#define BPF_CGROUP_RUN_PROG_INET_INGRESS(sk, skb)			      \
+({									      \
+	int __ret = 0;							      \
+	if (cgroup_bpf_enabled)						      \
+		__ret = __cgroup_bpf_run_filter_skb(sk, skb,		      \
+						    BPF_CGROUP_INET_INGRESS); \
+									      \
+	__ret;								      \
+})
+
+#define BPF_CGROUP_RUN_PROG_INET_EGRESS(sk, skb)			       \
+({									       \
+	int __ret = 0;							       \
+	if (cgroup_bpf_enabled && sk && sk == skb->sk) {		       \
+		typeof(sk) __sk = sk_to_full_sk(sk);			       \
+		if (sk_fullsock(__sk))					       \
+			__ret = __cgroup_bpf_run_filter_skb(__sk, skb,	       \
+						      BPF_CGROUP_INET_EGRESS); \
+	}								       \
+	__ret;								       \
+})
+
+#define BPF_CGROUP_RUN_PROG_INET_SOCK(sk)				       \
+({									       \
+	int __ret = 0;							       \
+	if (cgroup_bpf_enabled && sk) {					       \
+		__ret = __cgroup_bpf_run_filter_sk(sk,			       \
+						 BPF_CGROUP_INET_SOCK_CREATE); \
+	}								       \
+	__ret;								       \
+})
+
+#define BPF_CGROUP_RUN_PROG_SOCK_OPS(sock_ops)				       \
+({									       \
+	int __ret = 0;							       \
+	if (cgroup_bpf_enabled && (sock_ops)->sk) {	       \
+		typeof(sk) __sk = sk_to_full_sk((sock_ops)->sk);	       \
+		if (__sk && sk_fullsock(__sk))				       \
+			__ret = __cgroup_bpf_run_filter_sock_ops(__sk,	       \
+								 sock_ops,     \
+							 BPF_CGROUP_SOCK_OPS); \
+	}								       \
+	__ret;								       \
+})
+#else
+
+struct cgroup_bpf {};
+static inline void cgroup_sk_alloc(struct sock_cgroup_data *skcd) {}
+static inline void cgroup_sk_free(struct sock_cgroup_data *skcd) {}
+static inline void cgroup_bpf_put(struct cgroup *cgrp) {}
+static inline int cgroup_bpf_inherit(struct cgroup *cgrp) { return 0; }
+
+#define BPF_CGROUP_RUN_PROG_INET_INGRESS(sk,skb) ({ 0; })
+#define BPF_CGROUP_RUN_PROG_INET_EGRESS(sk,skb) ({ 0; })
+#define BPF_CGROUP_RUN_PROG_INET_SOCK(sk) ({ 0; })
+#define BPF_CGROUP_RUN_PROG_SOCK_OPS(sock_ops) ({ 0; })
+
+#endif /* CONFIG_CGROUP_BPF */
+
+#endif /* _BPF_CGROUP_H */

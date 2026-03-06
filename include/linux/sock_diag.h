@@ -23,6 +23,9 @@ void sock_diag_unregister_inet_compat(int (*fn)(struct sk_buff *skb, struct nlms
 int sock_diag_check_cookie(void *sk, __u32 *cookie);
 void sock_diag_save_cookie(void *sk, __u32 *cookie);
 
+/* Backported from Linux 4.13: get or generate a unique cookie for this socket */
+u64 sock_gen_cookie(struct sock *sk);
+
 int sock_diag_put_meminfo(struct sock *sk, struct sk_buff *skb, int attr);
 int sock_diag_put_filterinfo(bool may_report_filterinfo, struct sock *sk,
 			     struct sk_buff *skb, int attrtype);

@@ -306,6 +306,7 @@ static void udc_reinit(struct s3c_udc *dev)
 	unsigned int i;
 
 	DEBUG_SETUP("%s: %p\n", __func__, dev);
+	printk(KERN_ERR "s3c_udc_otg: udc_reinit: initializing ep caps\n");
 
 	/* device/ep0 records init */
 	INIT_LIST_HEAD(&dev->gadget.ep_list);
@@ -323,6 +324,24 @@ static void udc_reinit(struct s3c_udc *dev)
 		ep->stopped = 0;
 		INIT_LIST_HEAD(&ep->queue);
 		ep->pio_irqs = 0;
+
+		/* Initialize endpoint capabilities for usb_ep_autoconfig */
+		/* Legacy driver adaptation: core.c requires maxpacket_limit to be set, otherwise match fails */
+		ep->ep.maxpacket_limit = ep->ep.maxpacket;
+		printk(KERN_ERR "s3c_udc_otg: udc_reinit: ep%d caps init: maxpacket_limit=%d\n", i, ep->ep.maxpacket_limit);
+
+		ep->ep.caps.type_control = (ep->ep_type == ep_control);
+		ep->ep.caps.type_iso = (ep->ep_type == ep_isochronous);
+		ep->ep.caps.type_bulk = (ep->ep_type == ep_bulk_in || ep->ep_type == ep_bulk_out);
+		ep->ep.caps.type_int = (ep->ep_type == ep_interrupt);
+
+		if (ep->ep_type == ep_control) {
+			ep->ep.caps.dir_in = 1;
+			ep->ep.caps.dir_out = 1;
+		} else {
+			ep->ep.caps.dir_in = !!(ep->bEndpointAddress & USB_DIR_IN);
+			ep->ep.caps.dir_out = !(ep->bEndpointAddress & USB_DIR_IN);
+		}
 	}
 
 	/* the rest was statically initialized, and is read-only */
@@ -428,14 +447,21 @@ static int s3c_udc_start(struct usb_gadget *gadget,
 {
 	struct s3c_udc *dev = the_controller;
 
+	printk(KERN_ERR "s3c_udc_start: called, the_controller=%p, gadget=%p\n",
+		the_controller, gadget);
+
 	DEBUG_SETUP("%s: %s\n", __func__, driver->driver.name);
 
 	if (!driver
 		|| driver->max_speed < USB_SPEED_FULL
-		|| !driver->disconnect || !driver->setup)
+		|| !driver->disconnect || !driver->setup) {
+		printk(KERN_ERR "s3c_udc_start: driver validation failed\n");
 		return -EINVAL;
-	if (!dev)
+	}
+	if (!dev) {
+		printk(KERN_ERR "s3c_udc_start: the_controller is NULL!\n");
 		return -ENODEV;
+	}
 	if (dev->driver)
 		return -EBUSY;
 
@@ -457,15 +483,17 @@ static int s3c_udc_start(struct usb_gadget *gadget,
 /*
   Unregister entry point for the peripheral controller driver.
 */
-static int s3c_udc_stop(struct usb_gadget *gadget,
-			struct usb_gadget_driver *driver)
+static int s3c_udc_stop(struct usb_gadget *gadget)
 {
 	struct s3c_udc *dev = the_controller;
+	struct usb_gadget_driver *driver;
 	unsigned long flags;
 
 	if (!dev)
 		return -ENODEV;
-	if (!driver || driver != dev->driver)
+
+	driver = dev->driver;
+	if (!driver)
 		return -EINVAL;
 
 	spin_lock_irqsave(&dev->lock, flags);
@@ -1070,7 +1098,6 @@ static const struct usb_gadget_ops s3c_udc_ops = {
 
 static void nop_release(struct device *dev)
 {
-	DEBUG("%s %s\n", __func__, dev->bus_id);
 }
 
 static struct s3c_udc memory = {
@@ -1330,13 +1357,19 @@ static int s3c_udc_probe(struct platform_device *pdev)
 	int retval;
 	int err;
 
+	printk(KERN_INFO "s3c_udc_probe: starting, pdev=%p\n", pdev);
+
 	DEBUG("%s: %p\n", __func__, pdev);
 
 	phy = devm_usb_get_phy(&pdev->dev, USB_PHY_TYPE_USB2);
+	printk(KERN_INFO "s3c_udc_probe: devm_usb_get_phy returned %p, IS_ERR=%ld\n",
+		phy, IS_ERR(phy));
 	if (IS_ERR(phy)) {
 		pdata = pdev->dev.platform_data;
+		printk(KERN_INFO "s3c_udc_probe: phy error, pdata=%p\n", pdata);
 		if (!pdata) {
 			dev_err(&pdev->dev, "has platform data for phy or transceiver defiened\n");
+			printk(KERN_ERR "s3c_udc_probe: returning EPROBE_DEFER, the_controller NOT set!\n");
 			return -EPROBE_DEFER;
 		}
 		dev_set_name(&dev->gadget.dev, "gadget");
@@ -1345,6 +1378,7 @@ static int s3c_udc_probe(struct platform_device *pdev)
 	}
 
 	dev->otg = dev->phy->otg;
+	printk(KERN_INFO "s3c_udc_probe: phy=%p, otg=%p\n", dev->phy, dev->otg);
 
 	spin_lock_init(&dev->lock);
 	dev->dev = pdev;
@@ -1361,6 +1395,7 @@ static int s3c_udc_probe(struct platform_device *pdev)
 	dev->gadget.a_alt_hnp_support = 0;
 
 	the_controller = dev;
+	printk(KERN_INFO "s3c_udc_probe: the_controller set to %p\n", the_controller);
 	platform_set_drvdata(pdev, dev);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);

@@ -79,6 +79,7 @@
 #include <linux/mroute.h>
 #include <linux/netlink.h>
 #include <linux/tcp.h>
+#include <linux/bpf-cgroup.h>
 
 int sysctl_ip_default_ttl __read_mostly = IPDEFTTL;
 EXPORT_SYMBOL(sysctl_ip_default_ttl);
@@ -94,9 +95,19 @@ EXPORT_SYMBOL(ip_send_check);
 int __ip_local_out(struct sk_buff *skb)
 {
 	struct iphdr *iph = ip_hdr(skb);
+	struct sock *sk = skb->sk;
 
 	iph->tot_len = htons(skb->len);
 	ip_send_check(iph);
+
+	/* Run cgroup BPF egress filter before netfilter */
+	if (sk) {
+		int ret = BPF_CGROUP_RUN_PROG_INET_EGRESS(sk, skb);
+		if (ret) {
+			kfree_skb(skb);
+			return ret;
+		}
+	}
 
 	skb->protocol = htons(ETH_P_IP);
 

@@ -132,6 +132,7 @@
 #define IS_POSIX(fl)	(fl->fl_flags & FL_POSIX)
 #define IS_FLOCK(fl)	(fl->fl_flags & FL_FLOCK)
 #define IS_LEASE(fl)	(fl->fl_flags & FL_LEASE)
+#define IS_OFDLCK(fl)	(fl->fl_flags & FL_OFDLCK)
 
 static bool lease_breaking(struct file_lock *fl)
 {
@@ -515,7 +516,7 @@ static void locks_insert_block(struct file_lock *blocker,
 	BUG_ON(!list_empty(&waiter->fl_block));
 	list_add_tail(&waiter->fl_block, &blocker->fl_block);
 	waiter->fl_next = blocker;
-	if (IS_POSIX(blocker))
+	if (IS_POSIX(blocker) && !IS_OFDLCK(blocker))
 		list_add(&waiter->fl_link, &blocked_list);
 }
 
@@ -687,6 +688,13 @@ static int posix_locks_deadlock(struct file_lock *caller_fl,
 				struct file_lock *block_fl)
 {
 	int i = 0;
+
+	/*
+	 * This deadlock detector can't reasonably detect deadlocks with
+	 * FL_OFDLCK locks, since they aren't owned by a process, per-se.
+	 */
+	if (IS_OFDLCK(caller_fl))
+		return 0;
 
 	while ((block_fl = what_owner_is_waiting_for(block_fl))) {
 		if (i++ > MAX_DEADLK_ITERATIONS)
@@ -1720,7 +1728,7 @@ static void posix_lock_to_flock64(struct flock64 *flock, struct file_lock *fl)
 /* Report the first existing lock that would conflict with l.
  * This implements the F_GETLK command of fcntl().
  */
-int fcntl_getlk(struct file *filp, struct flock __user *l)
+int fcntl_getlk(struct file *filp, unsigned int cmd, struct flock __user *l)
 {
 	struct file_lock file_lock;
 	struct flock flock;
@@ -1736,6 +1744,16 @@ int fcntl_getlk(struct file *filp, struct flock __user *l)
 	error = flock_to_posix_lock(filp, &file_lock, &flock);
 	if (error)
 		goto out;
+
+	if (cmd == F_OFD_GETLK) {
+		error = -EINVAL;
+		if (flock.l_pid != 0)
+			goto out;
+
+		cmd = F_GETLK;
+		file_lock.fl_flags |= FL_OFDLCK;
+		file_lock.fl_owner = (fl_owner_t)filp;
+	}
 
 	error = vfs_test_lock(filp, &file_lock);
 	if (error)
@@ -1855,7 +1873,23 @@ int fcntl_setlk(unsigned int fd, struct file *filp, unsigned int cmd,
 	error = flock_to_posix_lock(filp, file_lock, &flock);
 	if (error)
 		goto out;
-	if (cmd == F_SETLKW) {
+
+	/*
+	 * If the cmd is requesting file-private (OFD) locks, then set the
+	 * FL_OFDLCK flag and override the owner.
+	 */
+	switch (cmd) {
+	case F_OFD_SETLK:
+		cmd = F_SETLK;
+		file_lock->fl_flags |= FL_OFDLCK;
+		file_lock->fl_owner = (fl_owner_t)filp;
+		break;
+	case F_OFD_SETLKW:
+		cmd = F_SETLKW;
+		file_lock->fl_flags |= FL_OFDLCK;
+		file_lock->fl_owner = (fl_owner_t)filp;
+		/* fall through */
+	case F_SETLKW:
 		file_lock->fl_flags |= FL_SLEEP;
 	}
 	
@@ -1879,10 +1913,12 @@ int fcntl_setlk(unsigned int fd, struct file *filp, unsigned int cmd,
 	error = do_lock_file_wait(filp, cmd, file_lock);
 
 	/*
-	 * Attempt to detect a close/fcntl race and recover by
-	 * releasing the lock that was just acquired.
+	 * Attempt to detect a close/fcntl race and recover by releasing the
+	 * lock that was just acquired. There is no need to do that when we're
+	 * unlocking though, or for OFD locks.
 	 */
-	if (!error && file_lock->fl_type != F_UNLCK) {
+	if (!error && file_lock->fl_type != F_UNLCK &&
+	    !(file_lock->fl_flags & FL_OFDLCK)) {
 		/*
 		 * We need that spin_lock here - it prevents reordering between
 		 * update of inode->i_flock and check for it done in
@@ -1907,7 +1943,7 @@ out:
 /* Report the first existing lock that would conflict with l.
  * This implements the F_GETLK command of fcntl().
  */
-int fcntl_getlk64(struct file *filp, struct flock64 __user *l)
+int fcntl_getlk64(struct file *filp, unsigned int cmd, struct flock64 __user *l)
 {
 	struct file_lock file_lock;
 	struct flock64 flock;
@@ -1923,6 +1959,16 @@ int fcntl_getlk64(struct file *filp, struct flock64 __user *l)
 	error = flock64_to_posix_lock(filp, &file_lock, &flock);
 	if (error)
 		goto out;
+
+	if (cmd == F_OFD_GETLK) {
+		error = -EINVAL;
+		if (flock.l_pid != 0)
+			goto out;
+
+		cmd = F_GETLK64;
+		file_lock.fl_flags |= FL_OFDLCK;
+		file_lock.fl_owner = (fl_owner_t)filp;
+	}
 
 	error = vfs_test_lock(filp, &file_lock);
 	if (error)
@@ -1975,7 +2021,23 @@ int fcntl_setlk64(unsigned int fd, struct file *filp, unsigned int cmd,
 	error = flock64_to_posix_lock(filp, file_lock, &flock);
 	if (error)
 		goto out;
-	if (cmd == F_SETLKW64) {
+
+	/*
+	 * If the cmd is requesting file-private (OFD) locks, then set the
+	 * FL_OFDLCK flag and override the owner.
+	 */
+	switch (cmd) {
+	case F_OFD_SETLK:
+		cmd = F_SETLK64;
+		file_lock->fl_flags |= FL_OFDLCK;
+		file_lock->fl_owner = (fl_owner_t)filp;
+		break;
+	case F_OFD_SETLKW:
+		cmd = F_SETLKW64;
+		file_lock->fl_flags |= FL_OFDLCK;
+		file_lock->fl_owner = (fl_owner_t)filp;
+		/* fall through */
+	case F_SETLKW64:
 		file_lock->fl_flags |= FL_SLEEP;
 	}
 	
@@ -1999,10 +2061,12 @@ int fcntl_setlk64(unsigned int fd, struct file *filp, unsigned int cmd,
 	error = do_lock_file_wait(filp, cmd, file_lock);
 
 	/*
-	 * Attempt to detect a close/fcntl race and recover by
-	 * releasing the lock that was just acquired.
+	 * Attempt to detect a close/fcntl race and recover by releasing the
+	 * lock that was just acquired. There is no need to do that when we're
+	 * unlocking though, or for OFD locks.
 	 */
-	if (!error && file_lock->fl_type != F_UNLCK) {
+	if (!error && file_lock->fl_type != F_UNLCK &&
+	    !(file_lock->fl_flags & FL_OFDLCK)) {
 		/*
 		 * We need that spin_lock here - it prevents reordering between
 		 * update of inode->i_flock and check for it done in
@@ -2095,6 +2159,11 @@ void locks_remove_flock(struct file *filp)
 			}
 			if (IS_LEASE(fl)) {
 				lease_modify(before, F_UNLCK);
+				continue;
+			}
+			/* Also remove OFD locks which are owned by the file */
+			if (IS_OFDLCK(fl)) {
+				locks_delete_lock(before);
 				continue;
 			}
 			/* What? */

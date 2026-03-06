@@ -1248,7 +1248,7 @@ out_nopush:
 	release_sock(sk);
 
 	if (copied + copied_syn)
-		uid_stat_tcp_snd(current_uid(), copied + copied_syn);
+		uid_stat_tcp_snd(from_kuid(&init_user_ns, current_uid()), copied + copied_syn);
 	return copied + copied_syn;
 
 do_fault:
@@ -1553,7 +1553,7 @@ int tcp_read_sock(struct sock *sk, read_descriptor_t *desc,
 	if (copied > 0) {
 		tcp_recv_skb(sk, seq, &offset);
 		tcp_cleanup_rbuf(sk, copied);
-		uid_stat_tcp_rcv(current_uid(), copied);
+		uid_stat_tcp_rcv(from_kuid(&init_user_ns, current_uid()), copied);
 	}
 	return copied;
 }
@@ -1960,7 +1960,7 @@ skip_copy:
 	release_sock(sk);
 
 	if (copied > 0)
-		uid_stat_tcp_rcv(current_uid(), copied);
+		uid_stat_tcp_rcv(from_kuid(&init_user_ns, current_uid()), copied);
 	return copied;
 
 out:
@@ -1970,7 +1970,7 @@ out:
 recv_urg:
 	err = tcp_recv_urg(sk, msg, len, flags);
 	if (err > 0)
-		uid_stat_tcp_rcv(current_uid(), err);
+		uid_stat_tcp_rcv(from_kuid(&init_user_ns, current_uid()), err);
 	goto out;
 
 recv_sndq:
@@ -2766,6 +2766,17 @@ void tcp_get_info(const struct sock *sk, struct tcp_info *info)
 	info->tcpi_rcv_space = tp->rcvq_space.space;
 
 	info->tcpi_total_retrans = tp->total_retrans;
+
+	/*
+	 * Extended fields backported from kernel 5.4 for Android 16 compatibility.
+	 * Fields for features not tracked in kernel 3.10 remain zero (from memset).
+	 */
+
+	/* notsent_bytes: data written but not yet sent */
+	info->tcpi_notsent_bytes = max_t(int, 0, tp->write_seq - tp->snd_nxt);
+
+	/* snd_wnd: peer's advertised receive window */
+	info->tcpi_snd_wnd = tp->snd_wnd;
 }
 EXPORT_SYMBOL_GPL(tcp_get_info);
 

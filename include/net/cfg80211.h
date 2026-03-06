@@ -2727,6 +2727,10 @@ struct wiphy {
 	const struct nl80211_vendor_cmd_info *vendor_events;
 	int n_vendor_commands, n_vendor_events;
 
+	u8 ext_features[DIV_ROUND_UP(NUM_NL80211_EXT_FEATURES, 8)];
+
+	u16 max_num_akm_suites;
+
 	char priv[0] __aligned(NETDEV_ALIGN);
 };
 
@@ -2738,6 +2742,43 @@ static inline struct net *wiphy_net(struct wiphy *wiphy)
 static inline void wiphy_net_set(struct wiphy *wiphy, struct net *net)
 {
 	write_pnet(&wiphy->_net, net);
+}
+
+/**
+ * wiphy_ext_feature_set - set the extended feature flag
+ *
+ * @wiphy: the wiphy to modify.
+ * @ftidx: extended feature bit index.
+ *
+ * The extended features are flagged in multiple bytes (see
+ * &struct wiphy.@ext_features)
+ */
+static inline void wiphy_ext_feature_set(struct wiphy *wiphy,
+					 enum nl80211_ext_feature_index ftidx)
+{
+	u8 *ft_byte;
+
+	ft_byte = &wiphy->ext_features[ftidx / 8];
+	*ft_byte |= BIT(ftidx % 8);
+}
+
+/**
+ * wiphy_ext_feature_isset - check the extended feature flag
+ *
+ * @wiphy: the wiphy to modify.
+ * @ftidx: extended feature bit index.
+ *
+ * The extended features are flagged in multiple bytes (see
+ * &struct wiphy.@ext_features)
+ */
+static inline bool
+wiphy_ext_feature_isset(const struct wiphy *wiphy,
+			enum nl80211_ext_feature_index ftidx)
+{
+	u8 ft_byte;
+
+	ft_byte = wiphy->ext_features[ftidx / 8];
+	return (ft_byte & BIT(ftidx % 8)) != 0;
 }
 
 /**

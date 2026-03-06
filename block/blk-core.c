@@ -443,9 +443,13 @@ static void __blk_drain_queue(struct request_queue *q, bool drain_all)
 	if (q->request_fn) {
 		struct request_list *rl;
 
-		blk_queue_for_each_rl(rl, q)
+		blk_queue_for_each_rl(rl, q) {
+			/* Skip if request_list is not initialized */
+			if (!rl->rq_pool)
+				continue;
 			for (i = 0; i < ARRAY_SIZE(rl->wait); i++)
 				wake_up_all(&rl->wait[i]);
+		}
 	}
 }
 

@@ -576,7 +576,39 @@ config RING_BUFFER_STARTUP_TEST
 
 	 If unsure, say N
 
+config KPROBE_EVENTS
+	depends on KPROBES
+	depends on HAVE_REGS_AND_STACK_ACCESS_API
+	bool "Enable kprobes-based dynamic events"
+	select TRACING
+	select PROBE_EVENTS
+	select DYNAMIC_FTRACE
+	default y
+	help
+	  This allows the user to add tracing events (similar to tracepoints)
+	  on the fly via the ftrace interface. See
+	  Documentation/trace/kprobetrace.txt for more details.
+
+	  Those events can be inserted wherever kprobes can probe, and record
+	  various register and memory values.
+
+	  This option is also required by perf-probe subcommand of perf tools.
+	  If you want to use perf tools, this option is strongly recommended.
+
+config PROBE_EVENTS
+	def_bool n
+
 endif # FTRACE
+
+config BPF_EVENTS
+	depends on BPF_SYSCALL
+	depends on PERF_EVENTS
+	bool
+	default y
+	help
+	  This allows the user to attach BPF programs to kprobe and tracepoint events.
+	  Note: On 3.10-based kernels without full kprobe support, tracepoint programs
+	  will be registered but will have stub implementations.
 
 endif # TRACING_SUPPORT
 

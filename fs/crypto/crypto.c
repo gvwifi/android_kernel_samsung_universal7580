@@ -29,6 +29,37 @@
 #include <crypto/aes.h>
 #include "fscrypt_private.h"
 
+/**
+ * fscrypt_msg() - Print a fscrypt message
+ * @inode: optional inode to associate with the message
+ * @level: kernel log level (KERN_WARNING, KERN_ERR, etc.)
+ * @fmt: printf-style format string
+ *
+ * Print a formatted fscrypt message with optional inode context.
+ */
+void fscrypt_msg(const struct inode *inode, const char *level,
+		 const char *fmt, ...)
+{
+	static DEFINE_RATELIMIT_STATE(rs, DEFAULT_RATELIMIT_INTERVAL,
+				      DEFAULT_RATELIMIT_BURST);
+	struct va_format vaf;
+	va_list args;
+
+	if (!__ratelimit(&rs))
+		return;
+
+	va_start(args, fmt);
+	vaf.fmt = fmt;
+	vaf.va = &args;
+	if (inode)
+		printk("%sfscrypt (ino %lu): %pV\n",
+		       level, inode->i_ino, &vaf);
+	else
+		printk("%sfscrypt: %pV\n", level, &vaf);
+	va_end(args);
+}
+EXPORT_SYMBOL(fscrypt_msg);
+
 static unsigned int num_prealloc_crypto_pages = 32;
 static unsigned int num_prealloc_crypto_ctxs = 128;
 

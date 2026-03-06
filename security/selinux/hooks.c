@@ -707,8 +707,11 @@ static int selinux_set_mnt_opts(struct super_block *sb,
 		sbsec->flags |= SE_SBPROC | SE_SBGENFS;
 
 	if (!strcmp(sb->s_type->name, "debugfs") ||
+	    !strcmp(sb->s_type->name, "tracefs") ||
+	    !strcmp(sb->s_type->name, "binder") ||
 	    !strcmp(sb->s_type->name, "sysfs") ||
-	    !strcmp(sb->s_type->name, "pstore"))
+	    !strcmp(sb->s_type->name, "pstore") ||
+	    !strcmp(sb->s_type->name, "bpf"))
 		sbsec->flags |= SE_SBGENFS;
 
 	/* Determine the labeling behavior to use for this filesystem type. */
@@ -2812,21 +2815,17 @@ static int selinux_inode_permission(struct inode *inode, int mask)
 	sid = cred_sid(cred);
 	isec = inode->i_security;
 
-// [ SEC_SELINUX_PORTING COMMON
-	/* skip sid == 1(kernel), it means first boot time */
+// [ SEC_SELINUX_PORTING COMMON - fixed: force lazy init instead of spinning
+	/* If inode security is not initialized yet, force initialization now.
+	 * The original Samsung code just spun with udelay(500) which is both
+	 * wasteful and unreliable. Instead, call inode_doinit_with_dentry()
+	 * which properly initializes the security context on-demand. */
 	if(isec->initialized != 1 && sid != 1) {
-		int count = 5;
-
-		while(count-- > 0) {
-			printk(KERN_ERR "SELinux : inode->i_security is not initialized. waiting...(%d/5)\n", 5-count); 
-			udelay(500);
-			if(isec->initialized == 1) {
-				printk(KERN_ERR "SELinux : inode->i_security is INITIALIZED.\n"); 
-				break;
-			}
-		}
+		inode_doinit_with_dentry(inode, NULL);
 		if(isec->initialized != 1) {
-			printk(KERN_ERR "SELinux : inode->i_security is not initialized. not fixed.\n"); 
+			printk_ratelimited(KERN_WARNING "SELinux: inode_doinit_with_dentry "
+				"could not initialize inode %lu (dev=%s)\n",
+				inode->i_ino, inode->i_sb->s_id);
 		}
 	}
 // ] SEC_SELINUX_PORTING COMMON

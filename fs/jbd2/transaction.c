@@ -196,6 +196,8 @@ repeat:
 	    (journal->j_errno != 0 && !(journal->j_flags & JBD2_ACK_ERR))) {
 		read_unlock(&journal->j_state_lock);
 		jbd2_journal_free_transaction(new_transaction);
+		printk(KERN_ERR "JBD2 DEBUG: start_this_handle returning EROFS on %s (aborted=%d, j_errno=%d)\n",
+		       journal->j_devname, is_journal_aborted(journal), journal->j_errno);
 		return -EROFS;
 	}
 

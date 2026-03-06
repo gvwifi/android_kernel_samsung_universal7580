@@ -60,6 +60,8 @@
 
 #define STACK_END_MAGIC		0x57AC6E9D
 
+#define BINDERFS_SUPER_MAGIC	0x6c6f6f70
+
 #define V9FS_MAGIC		0x01021997
 
 #define BDEVFS_MAGIC            0x62646576

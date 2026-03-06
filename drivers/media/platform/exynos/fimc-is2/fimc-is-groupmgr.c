@@ -806,7 +806,6 @@ int fimc_is_groupmgr_init(struct fimc_is_groupmgr *groupmgr,
 	path->group[GROUP_SLOT_ISP] = GROUP_ID_INVALID;
 	path->group[GROUP_SLOT_DIS] = GROUP_ID_INVALID;
 	path->group[GROUP_SLOT_FD] = GROUP_ID_INVALID;
-	path->group[GROUP_SLOT_MAX] = GROUP_ID_INVALID;
 
 	leader_group = groupmgr->leader[instance];
 	if (!leader_group) {

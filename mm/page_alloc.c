@@ -27,6 +27,10 @@
 #include <linux/kmemcheck.h>
 #include <linux/module.h>
 #include <linux/suspend.h>
+#include <linux/ftrace.h>
+#include <linux/lockdep.h>
+#include <linux/psi.h>
+#include <linux/nmi.h>
 #include <linux/pagevec.h>
 #include <linux/blkdev.h>
 #include <linux/slab.h>
@@ -2254,6 +2258,8 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	bool *contended_compaction, bool *deferred_compaction,
 	unsigned long *did_some_progress)
 {
+	unsigned long pflags;
+
 	if (!order)
 		return NULL;
 
@@ -2263,9 +2269,12 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	}
 
 	current->flags |= PF_MEMALLOC;
+	current->flags |= PF_MEMALLOC;
+	psi_memstall_enter(&pflags);
 	*did_some_progress = try_to_compact_pages(zonelist, order, gfp_mask,
 						nodemask, sync_migration,
 						contended_compaction);
+	psi_memstall_leave(&pflags);
 	current->flags &= ~PF_MEMALLOC;
 
 	if (*did_some_progress != COMPACT_SKIPPED) {
@@ -2358,9 +2367,13 @@ __alloc_pages_direct_reclaim(gfp_t gfp_mask, unsigned int order,
 {
 	struct page *page = NULL;
 	bool drained = false;
+	unsigned long pflags;
 
+	psi_memstall_enter(&pflags);
 	*did_some_progress = __perform_reclaim(gfp_mask, order, zonelist,
 					       nodemask);
+	psi_memstall_leave(&pflags);
+
 	if (unlikely(!(*did_some_progress)))
 		return NULL;
 

@@ -233,6 +233,119 @@ static int __init pm_debugfs_init(void)
 late_initcall(pm_debugfs_init);
 #endif /* CONFIG_DEBUG_FS */
 
+/* /sys/power/suspend_stats/ - sysfs interface for suspend/resume stats
+ * Required by Android 16's SystemSuspend service.
+ * Backported from kernel 5.4 (kernel/power/main.c).
+ */
+static char *suspend_step_name_sysfs(enum suspend_stat_step step)
+{
+	switch (step) {
+	case SUSPEND_FREEZE:
+		return "freeze";
+	case SUSPEND_PREPARE:
+		return "prepare";
+	case SUSPEND_SUSPEND:
+		return "suspend";
+	case SUSPEND_SUSPEND_NOIRQ:
+		return "suspend_noirq";
+	case SUSPEND_RESUME_NOIRQ:
+		return "resume_noirq";
+	case SUSPEND_RESUME:
+		return "resume";
+	default:
+		return "";
+	}
+}
+
+#define suspend_attr(_name)					\
+static ssize_t _name##_ss_show(struct kobject *kobj,		\
+		struct kobj_attribute *attr, char *buf)		\
+{								\
+	return sprintf(buf, "%d\n", suspend_stats._name);	\
+}								\
+static struct kobj_attribute _name##_ss_attr =			\
+	__ATTR(_name, 0444, _name##_ss_show, NULL)
+
+suspend_attr(success);
+suspend_attr(fail);
+suspend_attr(failed_freeze);
+suspend_attr(failed_prepare);
+suspend_attr(failed_suspend);
+suspend_attr(failed_suspend_late);
+suspend_attr(failed_suspend_noirq);
+suspend_attr(failed_resume);
+suspend_attr(failed_resume_early);
+suspend_attr(failed_resume_noirq);
+
+static ssize_t last_failed_dev_ss_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	int index;
+	char *last_failed_dev = NULL;
+
+	index = suspend_stats.last_failed_dev + REC_FAILED_NUM - 1;
+	index %= REC_FAILED_NUM;
+	last_failed_dev = suspend_stats.failed_devs[index];
+
+	return sprintf(buf, "%s\n", last_failed_dev);
+}
+static struct kobj_attribute last_failed_dev_ss_attr =
+	__ATTR(last_failed_dev, 0444, last_failed_dev_ss_show, NULL);
+
+static ssize_t last_failed_errno_ss_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	int index;
+	int last_failed_errno;
+
+	index = suspend_stats.last_failed_errno + REC_FAILED_NUM - 1;
+	index %= REC_FAILED_NUM;
+	last_failed_errno = suspend_stats.errno[index];
+
+	return sprintf(buf, "%d\n", last_failed_errno);
+}
+static struct kobj_attribute last_failed_errno_ss_attr =
+	__ATTR(last_failed_errno, 0444, last_failed_errno_ss_show, NULL);
+
+static ssize_t last_failed_step_ss_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	int index;
+	enum suspend_stat_step step;
+	char *last_failed_step = NULL;
+
+	index = suspend_stats.last_failed_step + REC_FAILED_NUM - 1;
+	index %= REC_FAILED_NUM;
+	step = suspend_stats.failed_steps[index];
+	last_failed_step = suspend_step_name_sysfs(step);
+
+	return sprintf(buf, "%s\n", last_failed_step);
+}
+static struct kobj_attribute last_failed_step_ss_attr =
+	__ATTR(last_failed_step, 0444, last_failed_step_ss_show, NULL);
+
+static struct attribute *suspend_stats_attrs[] = {
+	&success_ss_attr.attr,
+	&fail_ss_attr.attr,
+	&failed_freeze_ss_attr.attr,
+	&failed_prepare_ss_attr.attr,
+	&failed_suspend_ss_attr.attr,
+	&failed_suspend_late_ss_attr.attr,
+	&failed_suspend_noirq_ss_attr.attr,
+	&failed_resume_ss_attr.attr,
+	&failed_resume_early_ss_attr.attr,
+	&failed_resume_noirq_ss_attr.attr,
+	&last_failed_dev_ss_attr.attr,
+	&last_failed_errno_ss_attr.attr,
+	&last_failed_step_ss_attr.attr,
+	NULL,
+};
+
+static struct attribute_group suspend_stats_attr_group = {
+	.name = "suspend_stats",
+	.attrs = suspend_stats_attrs,
+};
+
 #endif /* CONFIG_PM_SLEEP */
 
 #ifdef CONFIG_PM_SLEEP_DEBUG
@@ -676,6 +789,11 @@ static int __init pm_init(void)
 	error = sysfs_create_group(power_kobj, &attr_group);
 	if (error)
 		return error;
+#ifdef CONFIG_PM_SLEEP
+	error = sysfs_create_group(power_kobj, &suspend_stats_attr_group);
+	if (error)
+		return error;
+#endif
 	pm_print_times_init();
 
 	return pm_autosleep_init();
