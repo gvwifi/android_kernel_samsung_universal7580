@@ -173,8 +173,8 @@ void __init early_ioremap_init(void)
 	early_ioremap_setup();
 }
 
-void __init __early_set_fixmap(enum fixed_addresses idx,
-			       phys_addr_t phys, pgprot_t flags)
+void __early_set_fixmap(enum fixed_addresses idx,
+		 phys_addr_t phys, pgprot_t flags)
 {
 	unsigned long addr = __fix_to_virt(idx);
 	pte_t *pte;
