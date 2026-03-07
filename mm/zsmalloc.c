@@ -2616,7 +2616,7 @@ void zs_destroy_pool(struct zs_pool *pool)
 EXPORT_SYMBOL_GPL(zs_destroy_pool);
 
 /* forward declaration needed because zs_init() calls zs_exit() on failure */
-static void __exit zs_exit(void);
+static void zs_exit(void);
 
 /*
  * 3.10 backport: Use the old register_cpu_notifier API instead of 4.14's
@@ -2673,7 +2673,7 @@ fail:
 	return notifier_to_errno(ret);
 }
 
-static void __exit zs_exit(void)
+static void zs_exit(void)
 {
 	int cpu;
 
