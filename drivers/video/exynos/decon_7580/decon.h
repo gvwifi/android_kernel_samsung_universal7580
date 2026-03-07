@@ -562,22 +562,6 @@ struct disp_bootloader_fb_info {
 	u32 format;
 };
 
-struct esd_protect {
-	u32 pcd_irq;
-	u32 err_irq;
-	u32 disp_det_irq;
-	u32 pcd_gpio;
-	u32 err_gpio;
-	u32 disp_det_gpio;
-	int pcd_pin_active;
-	int err_pin_active;
-	int det_pin_active;
-	u32 err_count;
-	u32 det_count;
-	struct workqueue_struct *esd_wq;
-	struct work_struct esd_work;
-	u32	queuework_pending;
-};
 
 /* Definitions below are used in the DECON */
 #define	DISP_EVENT_LOG_MAX	SZ_2K
@@ -606,6 +590,23 @@ void DISP_SS_EVENT_SIZE_ERR_LOG(struct v4l2_subdev *sd, struct disp_ss_size_info
 /**
 * END of CONFIG_DECON_EVENT_LOG
 */
+
+struct esd_protect {
+	u32 pcd_irq;
+	u32 err_irq;
+	u32 disp_det_irq;
+	u32 pcd_gpio;
+	u32 err_gpio;
+	u32 disp_det_gpio;
+	int pcd_pin_active;
+	int err_pin_active;
+	int det_pin_active;
+	u32 err_count;
+	u32 det_count;
+	struct workqueue_struct *esd_wq;
+	struct work_struct esd_work;
+	u32	queuework_pending;
+};
 
 struct dpu {
 	u32 scr_onoff;

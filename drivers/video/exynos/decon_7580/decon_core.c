@@ -2033,7 +2033,9 @@ static int decon_prevent_size_mismatch
 	u32 decon_line, dsim_line;
 	u32 decon_hoz, dsim_hoz;
 	u32 need_save = true;
+#ifdef CONFIG_DECON_EVENT_LOG
 	struct disp_ss_size_info info;
+#endif
 
 	if (decon->pdata->psr_mode == DECON_VIDEO_MODE)
 		return 0;
@@ -2052,11 +2054,13 @@ static int decon_prevent_size_mismatch
 
 		if (need_save) {
 			/* TODO: Save a err data */
+#ifdef CONFIG_DECON_EVENT_LOG
 			info.w_in = decon_hoz;
 			info.h_in = decon_line;
 			info.w_out = dsim_hoz;
 			info.h_out = dsim_line;
 			DISP_SS_EVENT_SIZE_ERR_LOG(&decon->sd, &info);
+#endif
 			need_save = false;
 		}
 
@@ -2125,10 +2129,12 @@ static void decon_update_regs(struct decon_device *decon, struct decon_reg_data 
 #endif /* CONFIG_USE_VSYNC_SKIP */
 	__decon_update_regs(decon, regs);
 
+#ifdef CONFIG_DECON_EVENT_LOG
 	if ((decon->disp_ss_log_unmask & EVT_TYPE_WININFO))
 		DISP_SS_EVENT_LOG_UPDATE_PARAMS(&decon->sd, regs);
 	else
 		DISP_SS_EVENT_LOG_WINCON(&decon->sd, regs);
+#endif
 
 	decon_wait_for_vsync(decon, VSYNC_TIMEOUT_MSEC);
 	if (decon_reg_wait_for_update_timeout(DECON_INT, 300 * 1000) < 0) {
@@ -2464,10 +2470,12 @@ static int decon_ioctl(struct fb_info *info, unsigned int cmd,
 			break;
 		}
 
+#ifdef CONFIG_DECON_EVENT_LOG
 		if ((decon->disp_ss_log_unmask & EVT_TYPE_WININFO))
 			DISP_SS_EVENT_LOG_WIN_CONFIG(&decon->sd, &decon->ioctl_data.win_data);
 		else
 			DISP_SS_EVENT_LOG(DISP_EVT_WIN_CONFIG, &decon->sd, ktime_set(0, 0));
+#endif
 
 		ret = decon_set_win_config(decon, &win_data);
 		if (ret)
