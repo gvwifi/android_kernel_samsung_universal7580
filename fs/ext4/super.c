@@ -3500,9 +3500,14 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* Precompute checksum seed for all metadata */
 	if (EXT4_HAS_RO_COMPAT_FEATURE(sb,
-			EXT4_FEATURE_RO_COMPAT_METADATA_CSUM))
-		sbi->s_csum_seed = ext4_chksum(sbi, ~0, es->s_uuid,
-					       sizeof(es->s_uuid));
+			EXT4_FEATURE_RO_COMPAT_METADATA_CSUM)) {
+		if (EXT4_HAS_INCOMPAT_FEATURE(sb,
+				EXT4_FEATURE_INCOMPAT_CSUM_SEED))
+			sbi->s_csum_seed = le32_to_cpu(es->s_checksum_seed);
+		else
+			sbi->s_csum_seed = ext4_chksum(sbi, ~0, es->s_uuid,
+						       sizeof(es->s_uuid));
+	}
 
 	/* Set defaults before we parse the mount options */
 	def_mount_opts = le32_to_cpu(es->s_default_mount_opts);
