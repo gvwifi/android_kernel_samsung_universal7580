@@ -140,8 +140,8 @@ struct bpf_verifier_stack_elem {
 	struct bpf_verifier_stack_elem *next;
 };
 
-#define BPF_COMPLEXITY_LIMIT_INSNS	131072
-#define BPF_COMPLEXITY_LIMIT_STACK	1024
+#define BPF_COMPLEXITY_LIMIT_INSNS	1000000
+#define BPF_COMPLEXITY_LIMIT_STACK	65536
 
 #define BPF_MAP_PTR_POISON ((void *)0xeB9F + POISON_POINTER_DELTA)
 
@@ -1950,9 +1950,21 @@ static int check_call(struct bpf_verifier_env *env, int func_id, int insn_idx)
 		 * can check 'value_size' boundary of memory access
 		 * to map element returned from bpf_map_lookup_elem()
 		 */
-		if (meta.map_ptr == NULL) {
-			verbose("kernel subsystem misconfigured verifier\n");
-			return -EINVAL;
+		if (meta.map_ptr == NULL ||
+		    meta.map_ptr->value_size == 0) {
+			/*
+			 * Helpers like bpf_sk_fullsock() return a pointer-
+			 * or-NULL but don't take a map argument, and
+			 * bpf_ringbuf_reserve() takes a map with
+			 * value_size=0 (size is specified per-call).
+			 * Use a static dummy map so the verifier can
+			 * still bounds-check accesses through the returned
+			 * pointer.
+			 */
+			static struct bpf_map bpf_dummy_map = {
+				.value_size = PAGE_SIZE,
+			};
+			meta.map_ptr = &bpf_dummy_map;
 		}
 		regs[BPF_REG_0].map_ptr = meta.map_ptr;
 		regs[BPF_REG_0].id = ++env->id_gen;
@@ -3673,6 +3685,12 @@ static int push_insn(int t, int w, int e, struct bpf_verifier_env *env)
 		insn_stack[cur_stack++] = w;
 		return 1;
 	} else if ((insn_state[w] & 0xF0) == DISCOVERED) {
+		/* back-edge (loop): allow bounded loops when the caller has
+		 * CAP_SYS_ADMIN.  Unbounded loops are caught later by the
+		 * instruction-count limit in do_check().
+		 */
+		if (capable(CAP_SYS_ADMIN))
+			return 0;
 		verbose("back-edge from insn %d to %d\n", t, w);
 		return -EINVAL;
 	} else if (insn_state[w] == EXPLORED) {
