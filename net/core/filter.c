@@ -2438,6 +2438,60 @@ static const struct bpf_func_proto bpf_skb_load_bytes_relative_proto = {
 	.arg5_type	= ARG_ANYTHING,
 };
 
+/* --- Ringbuf helper protos (defined in kernel/bpf/bpf_ringbuf.c) --- */
+extern const struct bpf_func_proto bpf_ringbuf_output_proto;
+extern const struct bpf_func_proto bpf_ringbuf_reserve_proto;
+extern const struct bpf_func_proto bpf_ringbuf_submit_proto;
+extern const struct bpf_func_proto bpf_ringbuf_discard_proto;
+
+/* --- bpf_sk_fullsock stub (func 95) ---
+ * Returns NULL so the BPF program takes the fallback path.
+ * Uses RET_PTR_TO_MAP_VALUE_OR_NULL; the verifier's dummy-map
+ * fallback allows this without a real map argument.
+ */
+BPF_CALL_1(bpf_sk_fullsock_stub, struct sock *, sk)
+{
+	return 0; /* NULL */
+}
+
+static const struct bpf_func_proto bpf_sk_fullsock_proto = {
+	.func		= bpf_sk_fullsock_stub,
+	.ret_type	= RET_PTR_TO_MAP_VALUE_OR_NULL,
+	.arg1_type	= ARG_ANYTHING,
+};
+
+/* --- bpf_sk_storage_get stub (func 107) ---
+ * Returns NULL (no storage found / no creation).
+ */
+BPF_CALL_4(bpf_sk_storage_get_stub, struct bpf_map *, map,
+	   struct sock *, sk, void *, value, u64, flags)
+{
+	return 0; /* NULL */
+}
+
+static const struct bpf_func_proto bpf_sk_storage_get_proto = {
+	.func		= bpf_sk_storage_get_stub,
+	.ret_type	= RET_PTR_TO_MAP_VALUE_OR_NULL,
+	.arg1_type	= ARG_CONST_MAP_PTR,
+	.arg2_type	= ARG_ANYTHING,
+	.arg3_type	= ARG_ANYTHING,
+	.arg4_type	= ARG_ANYTHING,
+};
+
+/* --- bpf_sk_storage_delete stub (func 108) --- */
+BPF_CALL_2(bpf_sk_storage_delete_stub, struct bpf_map *, map,
+	   struct sock *, sk)
+{
+	return -ENOENT;
+}
+
+static const struct bpf_func_proto bpf_sk_storage_delete_proto = {
+	.func		= bpf_sk_storage_delete_stub,
+	.ret_type	= RET_INTEGER,
+	.arg1_type	= ARG_CONST_MAP_PTR,
+	.arg2_type	= ARG_ANYTHING,
+};
+
 static const struct bpf_func_proto *
 bpf_base_func_proto(enum bpf_func_id func_id)
 {
@@ -2463,6 +2517,14 @@ bpf_base_func_proto(enum bpf_func_id func_id)
 	case BPF_FUNC_trace_printk:
 		if (capable(CAP_SYS_ADMIN))
 			return bpf_get_trace_printk_proto();
+	case BPF_FUNC_ringbuf_output:
+		return &bpf_ringbuf_output_proto;
+	case BPF_FUNC_ringbuf_reserve:
+		return &bpf_ringbuf_reserve_proto;
+	case BPF_FUNC_ringbuf_submit:
+		return &bpf_ringbuf_submit_proto;
+	case BPF_FUNC_ringbuf_discard:
+		return &bpf_ringbuf_discard_proto;
 	default:
 		return NULL;
 	}
@@ -2477,6 +2539,12 @@ sock_filter_func_proto(enum bpf_func_id func_id)
 	 */
 	case BPF_FUNC_get_current_uid_gid:
 		return &bpf_get_current_uid_gid_proto;
+	case BPF_FUNC_get_socket_cookie:
+		return &bpf_get_socket_cookie_proto;
+	case BPF_FUNC_sk_storage_get:
+		return &bpf_sk_storage_get_proto;
+	case BPF_FUNC_sk_storage_delete:
+		return &bpf_sk_storage_delete_proto;
 	default:
 		return bpf_base_func_proto(func_id);
 	}
@@ -2494,6 +2562,8 @@ sk_filter_func_proto(enum bpf_func_id func_id)
 		return &bpf_get_socket_uid_proto;
 	case BPF_FUNC_skb_load_bytes_relative:
 		return &bpf_skb_load_bytes_relative_proto;
+	case BPF_FUNC_sk_fullsock:
+		return &bpf_sk_fullsock_proto;
 	default:
 		return bpf_base_func_proto(func_id);
 	}
@@ -2562,6 +2632,25 @@ static bool bpf_skb_is_valid_access(int off, int size, enum bpf_access_type type
 		info->reg_type = PTR_TO_PACKET_END;
 		if (size != size_default)
 			return false;
+		break;
+	case bpf_ctx_range(struct __sk_buff, flow_keys):
+		/* __u64 pointer field — not directly accessible from BPF */
+		return false;
+	case bpf_ctx_range(struct __sk_buff, tstamp):
+		/* __u64 timestamp — read/write at 8-byte granularity */
+		if (size != sizeof(__u64))
+			return false;
+		break;
+	case bpf_ctx_range(struct __sk_buff, sk):
+		/* __u64 pointer to sock — read-only, 8-byte access.
+		 * Return as SCALAR_VALUE (= 0 at runtime); the BPF program
+		 * will call bpf_sk_fullsock() on it, whose stub returns NULL.
+		 * Using PTR_TO_MAP_VALUE_OR_NULL here would crash the verifier
+		 * in mark_map_reg() because map_ptr is not set for ctx reads.
+		 */
+		if (type == BPF_WRITE || size != sizeof(__u64))
+			return false;
+		/* reg_type stays SCALAR_VALUE (default) */
 		break;
 	default:
 		/* Only narrow read access allowed for now. */
@@ -3023,10 +3112,12 @@ static u32 bpf_convert_ctx_access(enum bpf_access_type type,
 					      bpf_target_off(struct sk_buff, tc_index, 2,
 							     target_size));
 #endif
+		*target_size = 2;
 		*insn++ = BPF_MOV64_IMM(si->dst_reg, 0);
 		break;
 
 	case offsetof(struct __sk_buff, napi_id):
+		*target_size = 4;
 		*insn++ = BPF_MOV64_IMM(si->dst_reg, 0);
 		break;
 	case offsetof(struct __sk_buff, family):
@@ -3079,6 +3170,7 @@ static u32 bpf_convert_ctx_access(enum bpf_access_type type,
 						     skc_v6_daddr.s6_addr32[0],
 						     4, target_size) + off);
 #else
+		*target_size = 4;
 		*insn++ = BPF_MOV32_IMM(si->dst_reg, 0);
 #endif
 		break;
@@ -3098,6 +3190,7 @@ static u32 bpf_convert_ctx_access(enum bpf_access_type type,
 						     skc_v6_rcv_saddr.s6_addr32[0],
 						     4, target_size) + off);
 #else
+		*target_size = 4;
 		*insn++ = BPF_MOV32_IMM(si->dst_reg, 0);
 #endif
 		break;
@@ -3126,6 +3219,71 @@ static u32 bpf_convert_ctx_access(enum bpf_access_type type,
 		*insn++ = BPF_LDX_MEM(BPF_H, si->dst_reg, si->dst_reg,
 				      bpf_target_off(struct sock_common,
 						     skc_num, 2, target_size));
+		break;
+
+	case offsetof(struct __sk_buff, data_meta):
+		/* data_meta not supported on 3.10, return 0 */
+		*target_size = 4;
+		*insn++ = BPF_MOV64_IMM(si->dst_reg, 0);
+		break;
+
+	case offsetof(struct __sk_buff, flow_keys):
+		/* flow_keys not supported on 3.10, return 0 */
+		*target_size = 8;
+		*insn++ = BPF_MOV64_IMM(si->dst_reg, 0);
+		break;
+
+	case offsetof(struct __sk_buff, tstamp):
+		/* ktime_t on arm64 is s64, tstamp.tv64 is the s64 value */
+		*target_size = 8;
+		if (type == BPF_WRITE)
+			*insn++ = BPF_STX_MEM(BPF_DW,
+					      si->dst_reg, si->src_reg,
+					      offsetof(struct sk_buff, tstamp));
+		else
+			*insn++ = BPF_LDX_MEM(BPF_DW,
+					      si->dst_reg, si->src_reg,
+					      offsetof(struct sk_buff, tstamp));
+		break;
+
+	case offsetof(struct __sk_buff, wire_len):
+		/* wire_len not directly available on 3.10, return 0 */
+		*target_size = 4;
+		*insn++ = BPF_MOV64_IMM(si->dst_reg, 0);
+		break;
+
+	case offsetof(struct __sk_buff, gso_segs):
+		/* skb_shinfo(skb)->gso_segs via NET_SKBUFF_DATA_USES_OFFSET path */
+		*target_size = 2;
+		*insn++ = BPF_LDX_MEM(BPF_FIELD_SIZEOF(struct sk_buff, end),
+				      BPF_REG_AX, si->src_reg,
+				      offsetof(struct sk_buff, end));
+		*insn++ = BPF_LDX_MEM(BPF_FIELD_SIZEOF(struct sk_buff, head),
+				      si->dst_reg, si->src_reg,
+				      offsetof(struct sk_buff, head));
+		*insn++ = BPF_ALU64_REG(BPF_ADD, si->dst_reg, BPF_REG_AX);
+		*insn++ = BPF_LDX_MEM(BPF_H, si->dst_reg, si->dst_reg,
+				      offsetof(struct skb_shared_info, gso_segs));
+		break;
+
+	case offsetof(struct __sk_buff, sk):
+		/* sk pointer not exposed on 3.10, return 0 */
+		*target_size = 8;
+		*insn++ = BPF_MOV64_IMM(si->dst_reg, 0);
+		break;
+
+	case offsetof(struct __sk_buff, gso_size):
+		/* skb_shinfo(skb)->gso_size via NET_SKBUFF_DATA_USES_OFFSET path */
+		*target_size = 2;
+		*insn++ = BPF_LDX_MEM(BPF_FIELD_SIZEOF(struct sk_buff, end),
+				      BPF_REG_AX, si->src_reg,
+				      offsetof(struct sk_buff, end));
+		*insn++ = BPF_LDX_MEM(BPF_FIELD_SIZEOF(struct sk_buff, head),
+				      si->dst_reg, si->src_reg,
+				      offsetof(struct sk_buff, head));
+		*insn++ = BPF_ALU64_REG(BPF_ADD, si->dst_reg, BPF_REG_AX);
+		*insn++ = BPF_LDX_MEM(BPF_H, si->dst_reg, si->dst_reg,
+				      offsetof(struct skb_shared_info, gso_size));
 		break;
 	}
 
@@ -3358,6 +3516,72 @@ static u32 sockopt_convert_ctx_access(enum bpf_access_type type,
 
 /* ---- BPF tracing program type implementations ---- */
 
+/* Probe read helper implementations using probe_kernel_read */
+static __always_inline int __bpf_probe_read_kernel_impl(void *dst, u32 size,
+							const void *unsafe_ptr)
+{
+	int ret;
+	if (!size)
+		return 0;
+	ret = probe_kernel_read(dst, (void *)unsafe_ptr, size);
+	if (unlikely(ret < 0))
+		memset(dst, 0, size);
+	return ret;
+}
+
+BPF_CALL_3(bpf_probe_read, void *, dst, u32, size, const void *, unsafe_ptr)
+{
+	return __bpf_probe_read_kernel_impl(dst, size, unsafe_ptr);
+}
+
+const struct bpf_func_proto bpf_probe_read_proto = {
+	.func		= bpf_probe_read,
+	.gpl_only	= true,
+	.ret_type	= RET_INTEGER,
+	.arg1_type	= ARG_PTR_TO_UNINIT_MEM,
+	.arg2_type	= ARG_CONST_SIZE_OR_ZERO,
+	.arg3_type	= ARG_ANYTHING,
+};
+
+BPF_CALL_3(bpf_probe_read_kernel, void *, dst, u32, size, const void *, unsafe_ptr)
+{
+	return __bpf_probe_read_kernel_impl(dst, size, unsafe_ptr);
+}
+
+const struct bpf_func_proto bpf_probe_read_kernel_proto = {
+	.func		= bpf_probe_read_kernel,
+	.gpl_only	= true,
+	.ret_type	= RET_INTEGER,
+	.arg1_type	= ARG_PTR_TO_UNINIT_MEM,
+	.arg2_type	= ARG_CONST_SIZE_OR_ZERO,
+	.arg3_type	= ARG_ANYTHING,
+};
+
+/* bpf_probe_read_user: stub that reads user-space memory atomically.
+ * Returns -EFAULT if the read fails (e.g. page not present).
+ */
+BPF_CALL_3(bpf_probe_read_user, void *, dst, u32, size, const void __user *, unsafe_ptr)
+{
+	int ret;
+	if (!size)
+		return 0;
+	ret = __copy_from_user_inatomic(dst, unsafe_ptr, size);
+	if (unlikely(ret != 0)) {
+		memset(dst, 0, size);
+		return -EFAULT;
+	}
+	return 0;
+}
+
+const struct bpf_func_proto bpf_probe_read_user_proto = {
+	.func		= bpf_probe_read_user,
+	.gpl_only	= true,
+	.ret_type	= RET_INTEGER,
+	.arg1_type	= ARG_PTR_TO_UNINIT_MEM,
+	.arg2_type	= ARG_CONST_SIZE_OR_ZERO,
+	.arg3_type	= ARG_ANYTHING,
+};
+
 /* Common helper function proto for tracing-type BPF programs */
 static const struct bpf_func_proto *
 tracing_func_proto(enum bpf_func_id func_id)
@@ -3387,6 +3611,22 @@ tracing_func_proto(enum bpf_func_id func_id)
 		return &bpf_get_numa_node_id_proto;
 	case BPF_FUNC_get_prandom_u32:
 		return &bpf_get_prandom_u32_proto;
+	/* Probe read helpers */
+	case BPF_FUNC_probe_read:
+		return &bpf_probe_read_proto;
+	case BPF_FUNC_probe_read_kernel:
+		return &bpf_probe_read_kernel_proto;
+	case BPF_FUNC_probe_read_user:
+		return &bpf_probe_read_user_proto;
+	/* Ringbuf helpers */
+	case BPF_FUNC_ringbuf_output:
+		return &bpf_ringbuf_output_proto;
+	case BPF_FUNC_ringbuf_reserve:
+		return &bpf_ringbuf_reserve_proto;
+	case BPF_FUNC_ringbuf_submit:
+		return &bpf_ringbuf_submit_proto;
+	case BPF_FUNC_ringbuf_discard:
+		return &bpf_ringbuf_discard_proto;
 	default:
 		return NULL;
 	}
