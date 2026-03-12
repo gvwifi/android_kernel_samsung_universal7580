@@ -1334,6 +1334,14 @@ static int __cpuinit cpufreq_stat_cpu_callback(struct notifier_block *nfb,
 	case CPU_ONLINE:
 	case CPU_ONLINE_FROZEN:
 		cpufreq_update_policy(cpu);
+		/*
+		 * Recreate per-cpu stats sysfs entries after hotplug-on.
+		 * cpufreq_stats_free_sysfs/free_table are called on the way
+		 * down (CPU_DOWN_PREPARE / CPU_DEAD) but the CPUFREQ_NOTIFY
+		 * path triggered by cpufreq_update_policy() does not always
+		 * recreate them for cluster hotplug. Call directly to be safe.
+		 */
+		cpufreq_stats_create_table_cpu(cpu);
 		break;
 	case CPU_DOWN_PREPARE:
 	case CPU_DOWN_PREPARE_FROZEN:
