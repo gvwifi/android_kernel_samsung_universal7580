@@ -2047,6 +2047,66 @@ COMPAT_SYSCALL_DEFINE6(epoll_pwait, int, epfd,
 }
 #endif
 
+/*
+ * 64-bit timespec for epoll_pwait2 — uses s64 tv_sec/tv_nsec so that
+ * 32-bit userspace gets y2038-safe behaviour without needing a compat entry.
+ */
+struct epoll_ts64 {
+	__s64 tv_sec;
+	__s64 tv_nsec;
+};
+
+/*
+ * epoll_pwait2 — like epoll_pwait but accepts a 64-bit timespec.
+ * Backported for Android 15 (BLASTBufferQueue) on kernel 3.10.
+ */
+SYSCALL_DEFINE6(epoll_pwait2, int, epfd, struct epoll_event __user *, events,
+		int, maxevents, const void __user *, timeout,
+		const sigset_t __user *, sigmask, size_t, sigsetsize)
+{
+	int error;
+	sigset_t ksigmask, sigsaved;
+	struct epoll_ts64 ts;
+	int ms = -1;
+
+	if (timeout) {
+		s64 ms64;
+
+		if (copy_from_user(&ts, timeout, sizeof(ts)))
+			return -EFAULT;
+		if (ts.tv_sec < 0 || ts.tv_nsec < 0 ||
+		    ts.tv_nsec >= NSEC_PER_SEC)
+			return -EINVAL;
+		ms64 = ts.tv_sec * MSEC_PER_SEC + ts.tv_nsec / NSEC_PER_MSEC;
+		/* Round sub-ms non-zero timeout up to 1 ms */
+		if (ms64 == 0 && (ts.tv_sec || ts.tv_nsec))
+			ms64 = 1;
+		ms = (ms64 > INT_MAX) ? INT_MAX : (int)ms64;
+	}
+
+	if (sigmask) {
+		if (sigsetsize != sizeof(sigset_t))
+			return -EINVAL;
+		if (copy_from_user(&ksigmask, sigmask, sizeof(ksigmask)))
+			return -EFAULT;
+		sigdelsetmask(&ksigmask, sigmask(SIGKILL) | sigmask(SIGSTOP));
+		sigprocmask(SIG_SETMASK, &ksigmask, &sigsaved);
+	}
+
+	error = sys_epoll_wait(epfd, events, maxevents, ms);
+
+	if (sigmask) {
+		if (error == -EINTR) {
+			memcpy(&current->saved_sigmask, &sigsaved,
+			       sizeof(sigsaved));
+			set_restore_sigmask();
+		} else
+			sigprocmask(SIG_SETMASK, &sigsaved, NULL);
+	}
+
+	return error;
+}
+
 static int __init eventpoll_init(void)
 {
 	struct sysinfo si;

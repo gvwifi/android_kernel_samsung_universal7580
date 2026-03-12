@@ -882,8 +882,8 @@ __SYSCALL(438, sys_ni_syscall)
 __SYSCALL(439, sys_ni_syscall)
 /* #define __NR_process_madvise 440 - not implemented in 3.10 */
 __SYSCALL(440, sys_ni_syscall)
-/* #define __NR_epoll_pwait2 441 - not implemented in 3.10 */
-__SYSCALL(441, sys_ni_syscall)
+#define __NR_epoll_pwait2 441
+__SYSCALL(441, sys_epoll_pwait2)
 /* #define __NR_mount_setattr 442 - not implemented in 3.10 */
 __SYSCALL(442, sys_ni_syscall)
 /* #define __NR_quotactl_fd 443 - not implemented in 3.10 */
