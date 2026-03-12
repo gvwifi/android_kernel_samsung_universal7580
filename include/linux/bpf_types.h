@@ -69,5 +69,7 @@ BPF_MAP_TYPE(BPF_MAP_TYPE_XSKMAP, xsk_map_ops)
 #ifdef CONFIG_INET
 /* BPF_MAP_TYPE(BPF_MAP_TYPE_SOCKHASH, sock_hash_ops) */
 #endif
+BPF_MAP_TYPE(BPF_MAP_TYPE_SK_STORAGE, sk_storage_map_ops)
+BPF_MAP_TYPE(BPF_MAP_TYPE_RINGBUF, ringbuf_map_ops)
 #endif
 BPF_PROG_TYPE(BPF_PROG_TYPE_SECCOMP, seccomp_verifier_ops)
